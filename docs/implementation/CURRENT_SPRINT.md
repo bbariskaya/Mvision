@@ -1,105 +1,111 @@
-# Sprint 01 — Data Foundation
+# Sprint 02 - DeepStream GPU Hot Path
 
 ## Objective
-Deliver canonical product contract, three-layer backend skeleton, PostgreSQL migration/repositories, MinIO/Qdrant adapters, cross-store persistence/reconciliation, and real dependency integration tests. No GPU inference, no model download, no product recognition/enroll routes.
 
-## Deliverables
-- `docs/implementation/CURRENT_SPRINT.md` (this file)
-- `docs/implementation/PHASE1_REQUIREMENT_TRACEABILITY.md`
-- `docs/implementation/REFERENCE_DECISION_LOG.md`
-- `docs/implementation/RUNTIME_INVENTORY.md`
-- `architecture/01-phase1-system-architecture.md`
-- `architecture/02-phase1-identity-process-lifecycle.md`
-- `architecture/03-phase1-postgresql-erd.md`
-- `architecture/04-phase1-api-contract.md`
-- `architecture/05-phase1-native-gpu-contract.md`
-- `architecture/06-phase1-cross-store-lifecycle.md`
-- `backend/` three-layer source tree
-  - `app/main.py`, `app/config.py`, health router, structured errors
-  - `app/infrastructure/database/models.py`
-  - `app/infrastructure/database/repositories/*`
-  - `app/infrastructure/object_storage/minio_adapter.py`
-  - `app/infrastructure/vector_store/qdrant_adapter.py`
-  - `app/services/face_sample_persistence_service.py`
-  - `app/services/storage_reconciliation_service.py`
-  - `app/services/exceptions.py`
-  - `alembic/` initial migration
-  - `tests/integration/` real dependency tests
-- `docker-compose.sprint01.yml`
-- `Makefile`
+Deliver the real Phase 1 image identity vertical slice defined by
+`requirements/ProjectRequirements.md`, using the approved YOLOv8-Face + ArcFace R50 models and a
+persistent native DeepStream 9 data plane. Phase 1 must complete before any video implementation.
 
-## 20-Step Checklist
+Detailed execution plan:
+`docs/superpowers/plans/2026-07-20-phase1-deepstream-implementation.md`.
 
-- [x] Step 1 — Preflight and safety snapshot
-- [x] Step 2 — Requirement traceability matrix
-- [x] Step 3 — Reference evidence matrix
-- [x] Step 4 — Runtime and artifact inventory
-- [x] Step 5 — Establish Sprint 01 ledger (this file)
-- [x] Step 6 — Freeze high-level architecture
-- [x] Step 7 — Freeze identity and process semantics
-- [x] Step 8 — Freeze ERD
-- [x] Step 9 — Freeze API contract (no implementation)
-- [x] Step 10 — Freeze GPU boundary and model candidate decision
-- [x] Step 11 — Freeze cross-store lifecycle
-- [x] Step 12 — Scaffold minimal backend
-- [x] Step 13 — Configuration and secret validation (`backend/app/config.py`, `.env.example`)
-- [x] Step 14 — SQLAlchemy models and UUIDv7
-- [x] Step 15 — Alembic migration validated on real PostgreSQL
-- [x] Step 16 — Concrete repositories + real PG integration tests
-- [x] Step 17 — MinIO adapter + integration tests
-- [x] Step 18 — Qdrant adapter + integration tests
-- [x] Step 19 — Persistence and reconciliation services + tests
-- [x] Step 20 — Full Sprint 01 acceptance and hard stop
+## Active Packet
 
-## Acceptance Commands
+Packet 2 / Tasks 3-4: persistent JPEG ingress and GPU detector postprocess.
 
-```bash
-docker compose -f docker-compose.sprint01.yml up -d postgres minio qdrant
-docker compose -f docker-compose.sprint01.yml run --rm api alembic upgrade head
-docker compose -f docker-compose.sprint01.yml run --rm pytest tests/integration -v
-make phase1-s1-static
-make phase1-s1-postgres
-make phase1-s1-storage
+Native protocol/build scaffolding and the persistent multi-slot GPU ingress are operational. The
+current focus is fusing YOLO DFL decode/NMS/landmark compaction onto the GPU before nvinfer output
+crosses the host boundary.
+
+## Completed Packet
+
+### Packet 1 - Runtime and Model Contract Gate
+
+- [x] Frozen artifact SHA test written RED-first and verified GREEN.
+- [x] Deterministic ONNX inspector implemented in a pinned Python 3.12 image.
+- [x] YOLO contract verified: input `[B,3,H,W]`, three 80-channel pose heads,
+  `kpt_shape=[5,3]`, stride 32.
+- [x] ArcFace contract verified: input `[B,3,112,112]`, graph-owned
+  `(input - 127.5) / 128`, output `[B,512]`, `LpNormalization` present.
+- [x] Runtime recorded: 3x Quadro RTX 8000, driver 580.105.08, CUDA 13.0,
+  TensorRT 10.16, DeepStream 9.0.0, GStreamer 1.24.2.
+- [x] Upstream decisions refreshed from real source and commit hashes.
+- [x] Internal implementation approval recorded; external/commercial model release remains a legal
+  review gate.
+
+## Packet 1 Evidence
+
+```text
+docker run ... pytest tests/contract/test_model_inventory.py -v
+5 passed
+
+docker compose ... ruff check app tests scripts
+All checks passed
+
+docker compose ... ruff format --check app tests scripts
+51 files already formatted
+
+docker compose ... mypy app tests scripts
+Success: no issues found in 51 source files
+
 make phase1-s1-acceptance
+37 passed; migration 58ecca5e38a3 (head); git diff --check clean
 ```
 
+Generated, uncommitted runtime report:
+`/tmp/opencode/mvision-model-contract.json`.
+
+### Packet 2 evidence so far
+
+- Python MessagePack frame contract: `6 passed`.
+- Native C++ protocol and real GPU ingress CTest: `2 passed`.
+- Persistent 16-slot `appsrc -> nvjpegdec -> NVMM -> nvstreammux` ingress: `1510.33 images/s` on
+  one RTX 8000.
+- YOLO FP16 dynamic engine, batch 1/64/256: built and benchmarked at `3104.05 images/s` ceiling for
+  batch 256 on one RTX 8000.
+- ArcFace FP16 dynamic engine, batch 1/64/256: built and benchmarked at `5136.51 faces/s` ceiling for
+  batch 256 on one RTX 8000.
+
+## Deliverables Remaining
+
+- Native C++17 worker process and Python/C++ protocol parity.
+- Request correlation across source slots and output batches.
+- GPU DFL decode/NMS/five-landmark compaction fused into the YOLO TensorRT engine.
+- Standard instance-mask landmark transport.
+- Official `nvdspreprocess` CUDA/NPP five-point alignment.
+- ArcFace SGIE and compact normalized embedding extraction.
+- GPU-only aligned JPEG evidence encoding.
+- Python GPU scheduler and full identity/storage lifecycle.
+- Recognition, enrollment, identity/sample, history, and process APIs.
+- Docker Compose deployment, restart acceptance, and measured throughput.
+
 ## Non-Goals
-- GPU decode, YOLOv8-Face TensorRT, ArcFace TensorRT
-- `/faces/recognize`, `/faces/enroll` functional inference endpoints
-- Model weight download/export
-- DeepStream/CUDA production code
-- OpenCV/FFmpeg inference path
-- UnitOfWork / ports / hexagonal / DDD aggregate / CQRS / generic base repository
-- Video/live/UI/bulk/import features
-- Git commit/push
+
+- Video upload, video jobs, sampling, tracking, or aggregation.
+- RTSP, webcam, live stream, camera lifecycle, or alerts.
+- UI.
+- Public bulk/dataset management API.
+- RetinaFace, GlintR100, SCRFD, or a second embedding space.
+- CPU decode/inference/postprocess/alignment/encoding fallback.
+- DeepStream Python bindings or patched system DeepStream libraries.
+- Model/dataset download, driver/system CUDA changes, or old collection reset.
+- Git commit/push without explicit user request.
 
 ## Hard Stops
-- Active root is not `/home/user/Workspace/Mvision`.
-- `ProjectRequirements.md` is missing or differs materially.
-- More than five tables required.
-- A `person` model appears necessary.
-- UnitOfWork/port architecture appears necessary.
-- A model/weight/download/system package is required in Sprint 01.
-- Live data migration/destructive repair is required.
-- Existing user changes overlap target files and cannot be preserved.
-- MinIO/Qdrant/PG credentials are unavailable for real tests.
+
+- Active root/branch changes unexpectedly or user changes overlap target files.
+- Frozen model SHA/tensor contract changes.
+- Pinned DeepStream 9 devel image is unavailable or incompatible with driver 580.105.08.
+- Standard DeepStream metadata cannot carry landmarks into official `nvdspreprocess`.
+- Standard ArcFace SGIE cannot consume preprocess tensor meta without patched `nvinfer`.
+- GPU-native JPEG ingress/alignment/evidence encode cannot be runtime-verified.
+- A model/system dependency download or destructive storage action becomes necessary.
 
 ## Evidence Classification
-- `SOURCE_VERIFIED` — Source/migration/test directly observed.
-- `RUNTIME_VERIFIED` — Command executed against real dependency container.
-- `USER_REPORTED_NOT_REPRODUCED` — Claim without local evidence.
-- `NOT_PROVEN` — Not yet validated.
 
-## Sprint 01 Results
-
-| Gate | Command | Result |
-|------|---------|--------|
-| Static | `make phase1-s1-static` | PASS |
-| PostgreSQL | `make phase1-s1-postgres` | PASS |
-| Storage | `make phase1-s1-storage` | PASS |
-| Acceptance | `make phase1-s1-acceptance` | PASS |
-| Integration tests | `pytest tests/integration` | 37 passed |
-| Migration | `alembic current` | `58ecca5e38a3 (head)` |
-| Git diff check | `git diff --check` | clean |
-
-Final status: **SPRINT01_FOUNDATION_COMPLETE_STOPPED_BEFORE_SPRINT02**
+- `SOURCE_VERIFIED`: model graph, hashes, current code, configs, and upstream source observed.
+- `RUNTIME_VERIFIED`: host NVIDIA runtime and Sprint 01 real dependency tests executed.
+- `NOT_PROVEN`: native worker, engine inference, GPU-only boundary, identity vertical slice,
+  throughput, three-GPU scaling.
+- `RELEASE_BLOCKED_LEGAL_REVIEW`: active model artifacts approved for internal implementation,
+  not approved here for external/commercial distribution.

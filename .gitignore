@@ -8,3 +8,7 @@ __pycache__/
 .venv/
 venv/
 models/
+
+# Native build and CTest output
+build/
+Testing/

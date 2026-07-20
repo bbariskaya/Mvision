@@ -28,7 +28,9 @@ Log of upstream repositories inspected and how they apply to Phase 1.
 - Observed commit: `33f893f chore: Get the input shape from onnx model`
 - License: No root LICENSE file found in local clone.
 - Classification: `ORACLE_ONLY` for ONNX inference shape and output structure.
-- Used behavior: Inspected dynamic-batch ONNX (`yolov8n-face.onnx`) that includes multi-scale outputs; used for detector shape reference.
+- Used behavior: `models/yolov8.py::postprocess` is an oracle for the active three-head layout:
+  channels `64 DFL + 1 class + 15 keypoints`, strides `8/16/32`, half-offset bbox grid,
+  integer keypoint grid, class sigmoid, and NMS. Production reimplementation remains CUDA-only.
 - Rejected behavior: Not copied as production source; no root LICENSE verified.
 
 ## DeepStream / pipeline references
@@ -38,8 +40,10 @@ Log of upstream repositories inspected and how they apply to Phase 1.
 - URL: https://github.com/marcoslucianops/DeepStream-Yolo-Face
 - Observed commit: `b46e259 Updates + DeepStream 8.0 support`
 - License: MIT (`tmp/DeepStream-Yolo-Face/LICENSE.md`) + NVIDIA copyright portions.
-- Classification: `ORACLE_ONLY`.
-- Used behavior: Custom parser attaching landmarks via `NvDsInferInstanceMaskInfo.mask`; `parse-bbox-func-name` + `custom-lib-path` config pattern.
+- Classification: `ADAPT` for standard DeepStream metadata/config patterns.
+- Used behavior: Custom parser attaching landmarks via `NvDsInferInstanceMaskInfo.mask`;
+  `network-type=3`, `parse-bbox-instance-mask-func-name`, `output-instance-mask=1`, and
+  `custom-lib-path` config pattern; CUDA-device `nvstreammux`; explicit `PLAYING -> NULL` teardown.
 - Rejected behavior: Parser performs host NMS and per-proposal allocation; not copied into production hot path. Sample batch=1 FP32 config is not dynamic-batch evidence.
 
 ### `zhouyuchong/face-recognition-deepstream` (local clone: `tmp/face-recognition-deepstream`)
@@ -48,17 +52,21 @@ Log of upstream repositories inspected and how they apply to Phase 1.
 - Observed commit: `d18cc58 pass test`
 - License: MIT (`tmp/face-recognition-deepstream/LICENSE`)
 - Classification: `ORACLE_ONLY`.
-- Used behavior: Probe extracting SGIE tensor output and L2 normalization/cosine matching pattern; pipeline orchestration lessons.
-- Rejected behavior: Probe copies 512-D output into Python/NumPy; performs L2/cosine on CPU; hardcoded `0.3` threshold. Not production hot path.
+- Used behavior: Pipeline stage ordering and SGIE tensor association oracle.
+- Rejected behavior: Patched-only `enable-output-landmark`, `network-type=100`, and
+  `alignment-type=1`; probe copies 512-D output into Python/NumPy, performs L2/cosine on CPU,
+  and hardcodes threshold `0.3`.
 
 ### `zhouyuchong/gst-nvinfer-custom` (local clone: `tmp/gst-nvinfer-custom`)
 
 - URL: https://github.com/zhouyuchong/gst-nvinfer-custom
 - Observed commit: `4ca3fc7 fix: sometimes wrong landmarks will cause error`
 - License: No root LICENSE file found in local clone.
-- Classification: `FORBIDDEN`.
-- Used behavior: None.
-- Rejected behavior: `install.sh` replaces system DeepStream `.so`/headers; patches `nvinfer`; uses OpenCV CPU similarity transform. Not installed or copied.
+- Classification: `ORACLE_ONLY`; production dependency remains forbidden.
+- Used behavior: ArcFace five-point template, transform direction, and NPP warp parity only.
+- Rejected behavior: `install.sh` replaces system DeepStream `.so`/headers; patches `nvinfer`;
+  computes Umeyama/SVD on CPU with OpenCV; allocates CUDA buffers in the processing loop; optional
+  host debug copies. Not installed or copied.
 
 ## Recognition model references
 
@@ -67,7 +75,9 @@ Log of upstream repositories inspected and how they apply to Phase 1.
 - URL: https://github.com/deepinsight/insightface
 - License: Code MIT; pretrained ArcFace weights (Glint360k/WebFace) are non-commercial research by default.
 - Classification: `ORACLE_ONLY` for canonical 112×112 five-point ArcFace template and alignment parity.
-- Used behavior: ArcFace R50 dynamic-batch ONNX (`models/arcface_r50_dynamic.onnx`) selected for Phase 1; input normalization and L2 normalization embedded.
+- Used behavior: ArcFace R50 dynamic-batch ONNX
+  (`backend/models/arcface_r50_dynamic.onnx`) selected for Phase 1. Artifact inspection proves
+  graph-owned `(input - 127.5) / 128` preprocessing and output `LpNormalization`.
 - Rejected behavior: Python/OpenCV reference path not used as production runtime; R100/Glint360 not selected — R50 WebFace is the active Phase 1 model.
 
 ## Official sources
@@ -78,3 +88,13 @@ Log of upstream repositories inspected and how they apply to Phase 1.
 - Classification: `ADOPT` for API/contract decisions.
 - Used behavior: `nvdspreprocess` custom-library API is the preferred extension point for landmark-aware GPU alignment. Python bindings are deprecated; native C++/GStreamer components preferred.
 - Rejected behavior: None.
+
+## Active model release gate
+
+- User decision: YOLOv8-Face + ArcFace R50 are approved for current internal implementation and
+  runtime validation. RetinaFace/GlintR100 decisions in `ProjectGoalandContext.md` are stale.
+- YOLO artifact metadata declares AGPL-3.0. Upstream source is used as an oracle; no GPL/AGPL
+  source is copied into proprietary production code.
+- ArcFace code is MIT, but pretrained-weight/training-data terms require legal approval before an
+  external/commercial release.
+- Classification: `IMPLEMENTATION_ALLOWED_RELEASE_BLOCKED_LEGAL_REVIEW`.
