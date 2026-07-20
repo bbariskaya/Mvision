@@ -13,8 +13,9 @@
 #include <vector>
 
 int main(int argc, char **argv) {
-  if (argc != 4) {
-    std::cerr << "usage: benchmark_image_ingress JPEG_PATH IMAGE_COUNT SOURCE_SLOTS\n";
+  if (argc != 7) {
+    std::cerr << "usage: benchmark_image_ingress JPEG_PATH IMAGE_COUNT SOURCE_SLOTS "
+                 "PGIE_CONFIG PREPROCESS_CONFIG SGIE_CONFIG\n";
     return 2;
   }
 
@@ -26,7 +27,7 @@ int main(int argc, char **argv) {
     throw std::runtime_error("invalid benchmark input");
   }
 
-  mvision::PersistentJpegPipeline pipeline(0, source_slots);
+  mvision::PersistentJpegPipeline pipeline(0, source_slots, argv[4], argv[5], argv[6]);
   pipeline.start();
 
   const auto started_at = std::chrono::steady_clock::now();
@@ -37,12 +38,18 @@ int main(int argc, char **argv) {
     throw std::runtime_error("timed out waiting for GPU ingress");
   }
   const auto finished_at = std::chrono::steady_clock::now();
+  const auto results = pipeline.take_results();
   pipeline.close();
+
+  std::size_t face_count = 0;
+  for (const auto &result : results) {
+    face_count += result.faces.size();
+  }
 
   const std::chrono::duration<double> elapsed = finished_at - started_at;
   const double fps = static_cast<double>(image_count) / elapsed.count();
   std::cout << std::fixed << std::setprecision(2) << "images=" << image_count
             << " slots=" << source_slots << " seconds=" << elapsed.count() << " fps=" << fps
-            << '\n';
+            << " faces=" << face_count << '\n';
   return 0;
 }

@@ -52,6 +52,7 @@ class FaceSamplePersistenceService:
         identity_status: str = "anonymous",
         name: str | None = None,
         metadata: dict | None = None,
+        manage_process: bool = True,
     ) -> FaceSample:
         object_key = f"faces/{face_id}/{sample_id}/aligned"
         identity, sample, is_new = await self._ensure_identity_and_sample(
@@ -64,13 +65,14 @@ class FaceSamplePersistenceService:
         if not is_new and sample.lifecycle_state == "active":
             return sample
 
-        async with AsyncSessionLocal() as session:
-            await self._process_repo.create(
-                session,
-                process_id=process_id,
-                process_type="enroll",
-            )
-            await session.commit()
+        if manage_process:
+            async with AsyncSessionLocal() as session:
+                await self._process_repo.create(
+                    session,
+                    process_id=process_id,
+                    process_type="enroll",
+                )
+                await session.commit()
 
         try:
             sha256 = await self._minio.upload_aligned_sample(
@@ -103,13 +105,12 @@ class FaceSamplePersistenceService:
                 landmarks=landmarks,
                 quality=quality,
             )
-            await self._event_repo.create(
-                session,
-                process_id=process_id,
-                event_type="sample_blob_ready",
-                sanitized_details={"sample_id": sample_id, "object_key": object_key},
-            )
             await session.commit()
+        await self._log_event(
+            process_id,
+            "sample_blob_ready",
+            {"sample_id": sample_id, "object_key": object_key},
+        )
 
         try:
             await self._qdrant.upsert(
@@ -136,14 +137,14 @@ class FaceSamplePersistenceService:
                     "Internal error finalizing sample.",
                     "PG_FINALIZATION_ERROR",
                 )
-            await self._process_repo.complete(session, process_id=process_id, face_count=1)
-            await self._event_repo.create(
-                session,
-                process_id=process_id,
-                event_type="sample_active",
-                sanitized_details={"sample_id": sample_id, "object_key": object_key},
-            )
+            if manage_process:
+                await self._process_repo.complete(session, process_id=process_id, face_count=1)
             await session.commit()
+        await self._log_event(
+            process_id,
+            "sample_active",
+            {"sample_id": sample_id, "object_key": object_key},
+        )
 
         return active_sample
 
@@ -196,11 +197,23 @@ class FaceSamplePersistenceService:
                     process_id=process_id,
                     error_code=error_code,
                 )
+                await session.commit()
+            await self._log_event(
+                process_id,
+                "sample_persistence_failed",
+                {"sample_id": sample_id, "error_code": error_code},
+            )
+        except Exception:
+            pass
+
+    async def _log_event(self, process_id: str, event_type: str, details: dict) -> None:
+        try:
+            async with AsyncSessionLocal() as session:
                 await self._event_repo.create(
                     session,
                     process_id=process_id,
-                    event_type="sample_persistence_failed",
-                    sanitized_details={"sample_id": sample_id, "error_code": error_code},
+                    event_type=event_type,
+                    sanitized_details=details,
                 )
                 await session.commit()
         except Exception:

@@ -1,4 +1,4 @@
-from sqlalchemy import update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database.models import FaceIdentity
@@ -26,6 +26,14 @@ class FaceIdentityRepository:
     async def get_by_id(self, session: AsyncSession, face_id: str) -> FaceIdentity | None:
         return await session.get(FaceIdentity, face_id)
 
+    async def get_active_by_id(self, session: AsyncSession, face_id: str) -> FaceIdentity | None:
+        result = await session.execute(
+            select(FaceIdentity)
+            .where(FaceIdentity.face_id == face_id)
+            .where(FaceIdentity.is_active.is_(True))
+        )
+        return result.scalar_one_or_none()
+
     async def update_known(
         self,
         session: AsyncSession,
@@ -36,6 +44,7 @@ class FaceIdentityRepository:
         stmt = (
             update(FaceIdentity)
             .where(FaceIdentity.face_id == face_id)
+            .where(FaceIdentity.is_active.is_(True))
             .values(
                 lifecycle_status="known",
                 name=name,
@@ -51,7 +60,12 @@ class FaceIdentityRepository:
         stmt = (
             update(FaceIdentity)
             .where(FaceIdentity.face_id == face_id)
-            .values(is_active=False, version=FaceIdentity.version + 1)
+            .where(FaceIdentity.is_active.is_(True))
+            .values(
+                is_active=False,
+                deleted_at=func.now(),
+                version=FaceIdentity.version + 1,
+            )
             .returning(FaceIdentity)
         )
         result = await session.execute(stmt)

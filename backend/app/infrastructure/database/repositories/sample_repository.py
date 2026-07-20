@@ -132,3 +132,14 @@ class FaceSampleRepository:
         )
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    async def deactivate_by_face(self, session: AsyncSession, face_id: str) -> list[str]:
+        samples = await self.list_by_face(session, face_id, True)
+        sample_ids = [sample.sample_id for sample in samples]
+        if sample_ids:
+            await session.execute(
+                update(FaceSample)
+                .where(FaceSample.sample_id.in_(sample_ids))
+                .values(lifecycle_state="inactive", is_active=False)
+            )
+        return sample_ids

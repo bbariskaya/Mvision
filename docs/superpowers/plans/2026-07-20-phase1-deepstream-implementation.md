@@ -594,6 +594,8 @@ fork of one demo.
 - Create: `backend/app/infrastructure/gpu/contracts.py`
 - Create: `backend/app/infrastructure/gpu/worker_client.py`
 - Create: `backend/app/infrastructure/gpu/scheduler.py`
+- Create: `docker/worker.Dockerfile`
+- Create: `docker-compose.gpu.yml`
 - Test: `backend/tests/contract/test_worker_protocol.py`
 - Test: `backend/tests/integration/gpu/test_gpu_scheduler.py`
 
@@ -652,10 +654,19 @@ fork of one demo.
 
 - [ ] **Step 40 of 60: Run three-GPU concurrency and teardown tests**
 
-  Send mixed valid/no-face/corrupt batches concurrently, assert every request completes once,
-  load distributes across GPU IDs `0,1,2`, result order is stable, backpressure is bounded, and
-  worker restart does not duplicate a completed request. Stop all workers and verify exit `0`, no
-  socket leaks/segfault, and GPU memory returns to measured baseline.
+  Only after the single-worker decode-through-evidence gate passes, build one immutable worker
+  image and start `gpu-worker-0/1/2` with `docker-compose.gpu.yml`. Compose assigns host devices
+  with NVIDIA `device_ids: ['0']`, `['1']`, and `['2']`. Each container sees exactly one GPU, so
+  native code always calls `cudaSetDevice(0)` and every DeepStream element uses `gpu-id=0`.
+  `WORKER_ID=0/1/2` is logical scheduler identity only and must never be passed to CUDA.
+
+  Mount one shared `/run/mvision` named volume for `worker-0.sock`, `worker-1.sock`, and
+  `worker-2.sock`. Send mixed valid/no-face/corrupt batches concurrently, assert every request
+  completes once, least-loaded scheduling distributes work across logical worker IDs `0,1,2`,
+  result order is stable, and backpressure is bounded. Restart one worker without duplicating a
+  completed request. Stop the project-scoped Compose deployment and verify exit `0`, no socket
+  leaks/segfault, and all three GPUs return to measured memory baseline. Do not start persistence
+  services for this worker-only gate.
 
 ## Packet 4: Identity, Persistence, and Recognition
 
@@ -708,6 +719,12 @@ fork of one demo.
   request plus `query_many()` using Qdrant's batch query API. Validate every vector/payload before
   issuing the request. MinIO has no transactional batch API: implement bounded concurrent
   `upload_aligned_samples()` and return per-sample success/failure without hiding partial writes.
+  Use one process-wide thread-safe MinIO client and a configurable dedicated thread pool; start
+  the 60-vCPU host sweep at `8,16,24,30,40` workers rather than consuming the default asyncio pool.
+  PostgreSQL remains async and uses SQLAlchemy insert-many parameter sets in explicit
+  transactions; Qdrant remains async, prefers gRPC, uses `query_batch_points()` for recognition
+  and one multi-point `upsert(wait=True)` for durable writes. Do not spend MinIO threads on
+  PostgreSQL or Qdrant calls.
 
   ```python
   @dataclass(frozen=True)
@@ -919,7 +936,8 @@ fork of one demo.
 
 - [ ] **Step 57 of 60: Define one-command three-GPU Compose deployment**
 
-  Compose starts PostgreSQL, MinIO, Qdrant, API, and `gpu-worker-0/1/2`. Pin each worker to one GPU,
+  Extend the already-proven worker-only Compose topology to start PostgreSQL, MinIO, Qdrant, API,
+  and `gpu-worker-0/1/2`. Preserve host `device_ids` isolation and container-local `gpu-id=0`.
   mount a shared `/run/mvision` socket volume and read-only model/config artifacts, persist all
   data volumes, add dependency health conditions, and configure restart policies/resource limits.
   Engine paths, thresholds, batch policy, timeouts, JPEG quality, ports, and storage settings come
@@ -940,6 +958,14 @@ fork of one demo.
   concurrent image requests through `GpuScheduler`, enforce exactly one face, persist through the
   same enrollment service, batch safe PG/Qdrant operations, and report accepted/rejected/retried
   counts without putting names in MinIO keys or Qdrant payloads. This is CLI-only, not an API route.
+
+  Print a single-line progress record at a configurable interval and write the final JSON report
+  atomically. Required counters/timers are: discovered images, submitted images, GPU-completed
+  images, durably active samples, rejected corrupt/no-face/multi-face images, persistence failures,
+  retries, current/high-water compute and persistence queue depths, logical worker distribution,
+  batch-size histogram, total wall time, GPU-stage elapsed time, persistence-drain elapsed time,
+  GPU images/s, and durable samples/s. The process exits nonzero if any unclassified failure is
+  omitted from accepted/rejected/failed totals.
 
 - [ ] **Step 59 of 60: Benchmark and tune without changing semantics**
 

@@ -1,4 +1,4 @@
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database.models import ProcessRecord
@@ -13,6 +13,7 @@ class ProcessRecordRepository:
         status: str = "started",
         face_count: int = 0,
         error_code: str | None = None,
+        details: dict | None = None,
     ) -> ProcessRecord:
         record = ProcessRecord(
             process_id=process_id,
@@ -20,6 +21,7 @@ class ProcessRecordRepository:
             status=status,
             face_count=face_count,
             error_code=error_code,
+            details=details or {},
         )
         session.add(record)
         await session.flush()
@@ -37,7 +39,7 @@ class ProcessRecordRepository:
         stmt = (
             update(ProcessRecord)
             .where(ProcessRecord.process_id == process_id)
-            .values(status="completed", face_count=face_count, completed_at="now()")
+            .values(status="completed", face_count=face_count, completed_at=func.now())
             .returning(ProcessRecord)
         )
         result = await session.execute(stmt)
@@ -52,7 +54,7 @@ class ProcessRecordRepository:
         stmt = (
             update(ProcessRecord)
             .where(ProcessRecord.process_id == process_id)
-            .values(status="failed", error_code=error_code, completed_at="now()")
+            .values(status="failed", error_code=error_code, completed_at=func.now())
             .returning(ProcessRecord)
         )
         result = await session.execute(stmt)

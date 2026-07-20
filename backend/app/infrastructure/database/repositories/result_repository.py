@@ -42,6 +42,23 @@ class RecognitionResultRepository:
         session: AsyncSession,
         process_id: str,
     ) -> list[RecognitionResult]:
-        stmt = select(RecognitionResult).where(RecognitionResult.process_id == process_id)
+        stmt = (
+            select(RecognitionResult)
+            .where(RecognitionResult.process_id == process_id)
+            .order_by(RecognitionResult.detection_ordinal)
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_face(
+        self,
+        session: AsyncSession,
+        face_id: str,
+    ) -> list[RecognitionResult]:
+        stmt = (
+            select(RecognitionResult)
+            .where(RecognitionResult.face_id == face_id)
+            .order_by(RecognitionResult.created_at.desc())
+        )
         result = await session.execute(stmt)
         return list(result.scalars().all())

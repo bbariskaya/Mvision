@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -137,6 +138,7 @@ class ProcessRecord(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="started")
     face_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -157,11 +159,11 @@ class ProcessRecord(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "process_type IN ('recognize', 'enroll', 'update', 'delete')",
+            "process_type IN ('recognize', 'enroll', 'update', 'delete', 'video_recognize')",
             name="process_record_type_check",
         ),
         CheckConstraint(
-            "status IN ('started', 'completed', 'failed')",
+            "status IN ('started', 'completed', 'failed', 'cancelled')",
             name="process_record_status_check",
         ),
         Index("ix_process_record_created_at", "created_at"),
@@ -238,4 +240,131 @@ class ProcessEvent(Base):
         Index("ix_process_event_process_id", "process_id"),
         Index("ix_process_event_event_type", "event_type"),
         Index("ix_process_event_created_at", "created_at"),
+    )
+
+
+class VideoJob(Base):
+    __tablename__ = "video_job"
+
+    job_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_uuid7)
+    process_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("process_record.process_id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    stage: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    progress_percent: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cancellation_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    available_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    worker_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    source_bucket: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_object_key: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
+    source_content_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    source_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_retention_until: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    source_deleted_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    container_format: Mapped[str] = mapped_column(String(32), nullable=False)
+    video_codec: Mapped[str] = mapped_column(String(32), nullable=False)
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    fps: Mapped[float] = mapped_column(Float, nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_frames: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    processed_frames: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    person_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sampling: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    tracks: Mapped[list[VideoTrack]] = relationship(
+        back_populates="job", lazy="raise", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'processing', 'cancelling', 'cancelled', 'completed', 'failed')",
+            name="video_job_status_check",
+        ),
+        CheckConstraint(
+            "progress_percent >= 0 AND progress_percent <= 100",
+            name="video_job_progress_check",
+        ),
+        CheckConstraint("attempt_count >= 0 AND max_attempts > 0", name="video_job_attempt_check"),
+        Index("ix_video_job_queue", "status", "available_at", "created_at"),
+        Index("ix_video_job_lease", "status", "lease_expires_at"),
+        Index("ix_video_job_retention", "source_retention_until", "source_deleted_at"),
+    )
+
+
+class VideoTrack(Base):
+    __tablename__ = "video_track"
+
+    track_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_uuid7)
+    job_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("video_job.job_id", ondelete="CASCADE"), nullable=False
+    )
+    track_ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_tracker_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    face_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("face_identity.face_id"), nullable=False
+    )
+    recognition_result_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("recognition_result.result_id"), nullable=False
+    )
+    status_snapshot: Mapped[str] = mapped_column(String(16), nullable=False)
+    name_snapshot: Mapped[str | None] = mapped_column(String(255))
+    metadata_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    identity_version_snapshot: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    match_confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    threshold_used: Mapped[float] = mapped_column(Float, nullable=False)
+    first_frame: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    last_frame: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    first_seen: Mapped[float] = mapped_column(Float, nullable=False)
+    last_seen: Mapped[float] = mapped_column(Float, nullable=False)
+    total_duration: Mapped[float] = mapped_column(Float, nullable=False)
+    detection_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    appearances: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    detections: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    representative_sample_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("face_sample.sample_id"), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    job: Mapped[VideoJob] = relationship(back_populates="tracks", lazy="raise")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status_snapshot IN ('known', 'anonymous', 'new_anonymous')",
+            name="video_track_status_check",
+        ),
+        UniqueConstraint("job_id", "track_ordinal", name="uq_video_track_job_ordinal"),
+        Index("ix_video_track_job_id", "job_id"),
+        Index("ix_video_track_face_id", "face_id"),
+        Index("ix_video_track_face_seen", "face_id", "first_seen"),
     )

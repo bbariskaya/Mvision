@@ -64,6 +64,12 @@ Workers are long-lived; an API request never creates or tears down a pipeline. E
 one CUDA device, DeepStream pipeline, TensorRT execution resources, and bounded input/output
 queues.
 
+Deployment uses three isolated worker containers. Compose pins each service to one host GPU with
+NVIDIA `device_ids`, so every container exposes exactly one CUDA device. Native code always calls
+`cudaSetDevice(0)`, and every DeepStream element uses container-local `gpu-id=0`; host IDs `1` and
+`2` never enter worker configuration. This keeps one immutable worker image/config valid for all
+three GPUs and prevents accidental cross-GPU allocation.
+
 ```text
 FastAPI / internal bulk utility
             |
@@ -81,7 +87,12 @@ FastAPI / internal bulk utility
 
 Scheduling uses bounded queues and backpressure. Bulk traffic may fill larger batches; normal
 API traffic uses a bounded wait so throughput optimization cannot cause unbounded request
-latency. Batch sizes are benchmark outputs, not hard-coded assumptions.
+latency. The scheduler selects the healthy worker with the lowest in-flight load, and each worker
+forms its own micro-batches. Batch sizes are benchmark outputs, not hard-coded assumptions.
+
+The deployment sequence is strict: first prove the complete decode-through-evidence pipeline in
+one worker, then instantiate three GPU-pinned workers, then attach identity and persistence. A
+detector-only worker is not considered deployable pipeline completion.
 
 ## 5. Canonical DeepStream Data Plane
 

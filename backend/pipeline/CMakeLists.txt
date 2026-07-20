@@ -24,6 +24,12 @@ find_library(
     PATHS /opt/nvidia/deepstream/deepstream/lib
     REQUIRED
 )
+find_library(
+    NVDS_META_LIBRARY
+    nvds_meta
+    PATHS /opt/nvidia/deepstream/deepstream/lib
+    REQUIRED
+)
 
 add_library(mvision_protocol src/protocol.cpp)
 target_include_directories(
@@ -43,9 +49,12 @@ add_library(mvision_pipeline src/image_source_pool.cpp)
 target_include_directories(mvision_pipeline PUBLIC include PRIVATE ${DEEPSTREAM_INCLUDE_DIR})
 target_link_libraries(
     mvision_pipeline
-    PUBLIC PkgConfig::GSTREAMER CUDA::cudart ${NVDS_GST_META_LIBRARY}
+    PUBLIC PkgConfig::GSTREAMER CUDA::cudart ${NVDS_GST_META_LIBRARY} ${NVDS_META_LIBRARY}
 )
-target_compile_options(mvision_pipeline PRIVATE -Wall -Wextra -Wpedantic -Werror)
+target_compile_options(
+    mvision_pipeline
+    PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers
+)
 
 add_executable(test_image_ingress tests/test_image_ingress.cpp)
 target_link_libraries(test_image_ingress PRIVATE mvision_pipeline)
@@ -55,9 +64,31 @@ add_test(
     COMMAND test_image_ingress ${CMAKE_CURRENT_SOURCE_DIR}/../../rachel.jpeg
 )
 
+add_executable(test_detector_pipeline tests/test_detector_pipeline.cpp)
+target_link_libraries(test_detector_pipeline PRIVATE mvision_pipeline)
+target_compile_options(test_detector_pipeline PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(
+    NAME detector_pipeline
+    COMMAND
+        test_detector_pipeline
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../rachel.jpeg
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../configs/pgie_yolov8_face.txt
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../configs/preprocess_arcface.txt
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../configs/sgie_arcface_r50.txt
+        1
+)
+
 add_executable(benchmark_image_ingress tools/benchmark_image_ingress.cpp)
 target_link_libraries(benchmark_image_ingress PRIVATE mvision_pipeline)
 target_compile_options(benchmark_image_ingress PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(mvision_worker src/worker_main.cpp)
+target_link_libraries(mvision_worker PRIVATE mvision_pipeline mvision_protocol)
+target_compile_options(mvision_worker PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(inspect_detector_pipeline tools/inspect_detector_pipeline.cpp)
+target_link_libraries(inspect_detector_pipeline PRIVATE mvision_pipeline)
+target_compile_options(inspect_detector_pipeline PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_library(mvision_yolo_postprocess src/yolo_postprocess.cu)
 set_target_properties(mvision_yolo_postprocess PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -81,19 +112,94 @@ find_path(
 find_library(TENSORRT_LIBRARY nvinfer REQUIRED)
 find_library(TENSORRT_PLUGIN_LIBRARY nvinfer_plugin REQUIRED)
 
-add_library(mvision_yolo_plugin SHARED src/yolo_postprocess_plugin.cpp)
-target_include_directories(mvision_yolo_plugin PRIVATE include ${TENSORRT_INCLUDE_DIR})
+add_library(
+    mvision_yolo_plugin
+    SHARED
+    src/yolo_postprocess_plugin.cpp
+    src/yolo_face_parser.cpp
+)
+target_include_directories(
+    mvision_yolo_plugin
+    PRIVATE include ${TENSORRT_INCLUDE_DIR} ${DEEPSTREAM_INCLUDE_DIR}
+)
 target_link_libraries(
     mvision_yolo_plugin
     PRIVATE mvision_yolo_postprocess ${TENSORRT_LIBRARY} ${TENSORRT_PLUGIN_LIBRARY}
 )
 target_compile_options(
     mvision_yolo_plugin
-    PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-deprecated-declarations
+    PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+        -Wno-deprecated-declarations
+        -Wno-missing-field-initializers
+        -Wno-unused-parameter
 )
+
+add_executable(test_yolo_face_parser tests/test_yolo_face_parser.cpp)
+target_include_directories(test_yolo_face_parser PRIVATE include ${DEEPSTREAM_INCLUDE_DIR})
+target_link_libraries(test_yolo_face_parser PRIVATE mvision_yolo_plugin CUDA::cudart)
+target_compile_options(
+    test_yolo_face_parser
+    PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers
+)
+add_test(NAME yolo_face_parser COMMAND test_yolo_face_parser)
 
 add_executable(benchmark_yolo_postprocess tools/benchmark_yolo_postprocess.cu)
 target_link_libraries(
     benchmark_yolo_postprocess
     PRIVATE mvision_yolo_postprocess CUDA::cudart
+)
+
+add_library(mvision_face_alignment src/face_align_kernel.cu)
+set_target_properties(mvision_face_alignment PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(mvision_face_alignment PUBLIC include)
+target_link_libraries(mvision_face_alignment PUBLIC CUDA::cudart)
+target_compile_options(
+    mvision_face_alignment
+    PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr;-Xcompiler=-Wall,-Wextra,-Werror>
+)
+
+add_executable(test_face_alignment tests/test_face_alignment.cu)
+target_link_libraries(test_face_alignment PRIVATE mvision_face_alignment CUDA::cudart)
+add_test(NAME face_alignment COMMAND test_face_alignment)
+
+find_path(
+    NVDSPREPROCESS_INCLUDE_DIR
+    nvdspreprocess_interface.h
+    PATHS /opt/nvidia/deepstream/deepstream/sources/gst-plugins/gst-nvdspreprocess/include
+    REQUIRED
+)
+find_library(
+    NVBUFSURFTRANSFORM_LIBRARY
+    nvbufsurftransform
+    PATHS /opt/nvidia/deepstream/deepstream/lib
+    REQUIRED
+)
+
+add_library(mvision_face_preprocess SHARED src/face_preprocess.cpp)
+target_include_directories(
+    mvision_face_preprocess
+    PRIVATE include ${DEEPSTREAM_INCLUDE_DIR} ${NVDSPREPROCESS_INCLUDE_DIR}
+)
+target_link_libraries(
+    mvision_face_preprocess
+    PRIVATE
+        mvision_face_alignment
+        PkgConfig::GSTREAMER
+        CUDA::cudart
+        ${NVDS_META_LIBRARY}
+        ${NVBUFSURFTRANSFORM_LIBRARY}
+)
+target_compile_options(
+    mvision_face_preprocess
+    PRIVATE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Werror
+        -Wno-missing-field-initializers
+        -Wno-unused-parameter
 )
