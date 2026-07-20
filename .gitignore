@@ -1,0 +1,10 @@
+# Downloaded LFW dataset — not source-controlled
+lfw/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+models/
