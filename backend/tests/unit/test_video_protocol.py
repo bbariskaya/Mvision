@@ -53,6 +53,7 @@ def test_decode_track_event_preserves_embedding_and_detection():
                         "width": 3.0,
                         "height": 4.0,
                         "detector_confidence": 0.9,
+                        "landmarks": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
                     }
                 ],
             }
@@ -63,6 +64,18 @@ def test_decode_track_event_preserves_embedding_and_detection():
     assert event.tracker_id == 42
     assert len(event.embedding) == 512
     assert event.detections[0].frame == 5
+    assert event.detections[0].landmarks == (
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0,
+        6.0,
+        7.0,
+        8.0,
+        9.0,
+        10.0,
+    )
     assert event.representative_jpeg.startswith(b"\xff\xd8")
 
 

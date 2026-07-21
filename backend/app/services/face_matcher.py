@@ -26,12 +26,27 @@ class FaceMatcher:
         self._qdrant = qdrant
 
     async def match(self, embedding: list[float]) -> FaceMatch | None:
+        candidates = await self.candidates(embedding, minimum_score=0.0)
+        for candidate in candidates:
+            threshold = (
+                self._settings.recognition_threshold
+                if candidate.identity.lifecycle_status == "known"
+                else self._settings.anonymous_threshold
+            )
+            if candidate.score >= threshold:
+                return candidate
+        return None
+
+    async def candidates(
+        self, embedding: list[float], *, minimum_score: float
+    ) -> list[FaceMatch]:
         candidates = await self._qdrant.search(
             embedding,
             top_k=10,
             embedding_model_version=self._settings.model_version,
             preprocess_version=self._settings.preprocess_version,
         )
+        matches: list[FaceMatch] = []
         async with AsyncSessionLocal() as session:
             for candidate in candidates:
                 payload = candidate.get("payload") or {}
@@ -41,12 +56,9 @@ class FaceMatcher:
                 identity = await self._identity_repo.get_active_by_id(session, str(face_id))
                 if identity is None:
                     continue
-                threshold = (
-                    self._settings.recognition_threshold
-                    if identity.lifecycle_status == "known"
-                    else self._settings.anonymous_threshold
-                )
                 score = min(1.0, max(0.0, float(candidate["score"])))
-                if score >= threshold:
-                    return FaceMatch(identity, str(candidate["sample_id"]), score)
-        return None
+                if score >= minimum_score:
+                    matches.append(
+                        FaceMatch(identity, str(candidate["sample_id"]), score)
+                    )
+        return matches

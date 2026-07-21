@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     video_job_max_attempts: int = 3
     video_progress_update_interval_seconds: float = 1.0
     video_track_reconciliation_threshold: float = 0.60
+    video_track_vote_candidate_floor: float = Field(default=0.70, ge=0.0, le=1.0)
+    video_track_vote_min_count: int = Field(default=2, ge=2)
+    video_track_vote_min_margin: float = Field(default=0.05, ge=0.0, le=1.0)
+    video_track_vote_min_support_ratio: float = Field(default=0.60, gt=0.5, le=1.0)
     video_appearance_max_gap_seconds: float = 1.5
     video_worker_poll_seconds: float = 1.0
     video_worker_gpu_id: int = 0

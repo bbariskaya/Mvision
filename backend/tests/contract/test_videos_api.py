@@ -61,6 +61,79 @@ class _JobService:
         assert job_id == JOB_ID
         return _job("cancelled")
 
+    async def result(self, job_id):
+        assert job_id == JOB_ID
+        return {
+            "job_id": JOB_ID,
+            "process_id": PROCESS_ID,
+            "status": "completed",
+            "video": _job()["video"],
+            "person_count": 1,
+            "persons": [
+                {
+                    "face_id": "019f8000-0000-7000-8000-000000000010",
+                    "track_id": "019f8000-0000-7000-8000-000000000011",
+                    "status": "known",
+                    "name": "Ada",
+                    "metadata": {},
+                    "first_seen": 0.2,
+                    "last_seen": 0.2,
+                    "total_duration": 0.0,
+                    "confidence": 0.9,
+                    "appearances": [
+                        {"start": 0.2, "end": 0.2, "startFrame": 5, "endFrame": 5}
+                    ],
+                    "detections": [
+                        {
+                            "frame": 5,
+                            "timestamp": 0.2,
+                            "boundingBox": {"x": 1, "y": 2, "width": 3, "height": 4},
+                            "confidence": 0.9,
+                            "landmarks": [
+                                {"x": 1.5, "y": 2.5},
+                                {"x": 2.5, "y": 2.5},
+                                {"x": 2.0, "y": 3.0},
+                                {"x": 1.6, "y": 3.5},
+                                {"x": 2.4, "y": 3.5},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+    async def source(self, job_id, range_header):
+        assert job_id == JOB_ID
+        assert range_header == "bytes=1-3"
+        return {
+            "data": b"ide",
+            "content_type": "video/mp4",
+            "status_code": 206,
+            "headers": {
+                "Content-Range": "bytes 1-3/5",
+                "Accept-Ranges": "bytes",
+                "Content-Length": "3",
+            },
+        }
+
+    async def appearances(self, face_id):
+        return {
+            "face_id": face_id,
+            "appearances": [
+                {
+                    "job_id": JOB_ID,
+                    "track_id": "019f8000-0000-7000-8000-000000000011",
+                    "first_seen": 0.2,
+                    "last_seen": 0.2,
+                    "intervals": [
+                        {"start": 0.2, "end": 0.2, "startFrame": 5, "endFrame": 5}
+                    ],
+                    "source_available": True,
+                    "created_at": NOW,
+                }
+            ],
+        }
+
 
 def _client() -> TestClient:
     app.dependency_overrides[get_video_upload_service] = lambda: _UploadService()
@@ -92,6 +165,25 @@ def test_job_status_and_cancellation_contracts():
     assert status.json()["video"]["sampling"]["everyNFrames"] == 5
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
+
+
+def test_result_source_range_and_face_appearances_contracts():
+    api = _client()
+    result = api.get(f"/api/v1/videos/jobs/{JOB_ID}/result")
+    source = api.get(
+        f"/api/v1/videos/jobs/{JOB_ID}/video", headers={"Range": "bytes=1-3"}
+    )
+    face_id = "019f8000-0000-7000-8000-000000000010"
+    appearances = api.get(f"/api/v1/faces/{face_id}/appearances")
+
+    assert result.status_code == 200
+    assert result.json()["persons"][0]["detections"][0]["frame"] == 5
+    assert len(result.json()["persons"][0]["detections"][0]["landmarks"]) == 5
+    assert source.status_code == 206
+    assert source.content == b"ide"
+    assert source.headers["content-range"] == "bytes 1-3/5"
+    assert appearances.status_code == 200
+    assert appearances.json()["appearances"][0]["jobId"] == JOB_ID
 
 
 def teardown_module():

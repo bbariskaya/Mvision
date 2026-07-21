@@ -107,6 +107,141 @@ services:
       - worker_sockets:/run/mvision
     restart: unless-stopped
 
+  video-worker-0:
+    image: mvision-gpu-worker:local
+    build:
+      context: .
+      dockerfile: backend/pipeline/Dockerfile
+    command: ["python3", "-m", "app.worker.video_worker_main"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://mergen:mergen@postgres:5432/mergenvision
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: face_samples_arcface_r50_webface_v1
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_FACES: mergenvision-faces
+      MINIO_BUCKET_VIDEOS: mergenvision-videos
+      RECOGNITION_THRESHOLD: ${RECOGNITION_THRESHOLD:-0.90}
+      ANONYMOUS_THRESHOLD: ${ANONYMOUS_THRESHOLD:-0.90}
+      VIDEO_TRACK_RECONCILIATION_THRESHOLD: ${VIDEO_TRACK_RECONCILIATION_THRESHOLD:-0.90}
+      VIDEO_TRACK_VOTE_CANDIDATE_FLOOR: ${VIDEO_TRACK_VOTE_CANDIDATE_FLOOR:-0.70}
+      VIDEO_TRACK_VOTE_MIN_COUNT: ${VIDEO_TRACK_VOTE_MIN_COUNT:-2}
+      VIDEO_TRACK_VOTE_MIN_MARGIN: ${VIDEO_TRACK_VOTE_MIN_MARGIN:-0.05}
+      VIDEO_TRACK_VOTE_MIN_SUPPORT_RATIO: ${VIDEO_TRACK_VOTE_MIN_SUPPORT_RATIO:-0.60}
+      VIDEO_WORKER_ID: video-worker-0
+      VIDEO_WORKER_GPU_ID: 0
+      VIDEO_NATIVE_EXECUTABLE: /workspace/build/pipeline/mvision_video_worker
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
+  video-worker-1:
+    image: mvision-gpu-worker:local
+    build:
+      context: .
+      dockerfile: backend/pipeline/Dockerfile
+    command: ["python3", "-m", "app.worker.video_worker_main"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://mergen:mergen@postgres:5432/mergenvision
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: face_samples_arcface_r50_webface_v1
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_FACES: mergenvision-faces
+      MINIO_BUCKET_VIDEOS: mergenvision-videos
+      RECOGNITION_THRESHOLD: ${RECOGNITION_THRESHOLD:-0.90}
+      ANONYMOUS_THRESHOLD: ${ANONYMOUS_THRESHOLD:-0.90}
+      VIDEO_TRACK_RECONCILIATION_THRESHOLD: ${VIDEO_TRACK_RECONCILIATION_THRESHOLD:-0.90}
+      VIDEO_TRACK_VOTE_CANDIDATE_FLOOR: ${VIDEO_TRACK_VOTE_CANDIDATE_FLOOR:-0.70}
+      VIDEO_TRACK_VOTE_MIN_COUNT: ${VIDEO_TRACK_VOTE_MIN_COUNT:-2}
+      VIDEO_TRACK_VOTE_MIN_MARGIN: ${VIDEO_TRACK_VOTE_MIN_MARGIN:-0.05}
+      VIDEO_TRACK_VOTE_MIN_SUPPORT_RATIO: ${VIDEO_TRACK_VOTE_MIN_SUPPORT_RATIO:-0.60}
+      VIDEO_WORKER_ID: video-worker-1
+      VIDEO_WORKER_GPU_ID: 0
+      VIDEO_NATIVE_EXECUTABLE: /workspace/build/pipeline/mvision_video_worker
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
+  video-worker-2:
+    image: mvision-gpu-worker:local
+    build:
+      context: .
+      dockerfile: backend/pipeline/Dockerfile
+    command: ["python3", "-m", "app.worker.video_worker_main"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://mergen:mergen@postgres:5432/mergenvision
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: face_samples_arcface_r50_webface_v1
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_FACES: mergenvision-faces
+      MINIO_BUCKET_VIDEOS: mergenvision-videos
+      RECOGNITION_THRESHOLD: ${RECOGNITION_THRESHOLD:-0.90}
+      ANONYMOUS_THRESHOLD: ${ANONYMOUS_THRESHOLD:-0.90}
+      VIDEO_TRACK_RECONCILIATION_THRESHOLD: ${VIDEO_TRACK_RECONCILIATION_THRESHOLD:-0.90}
+      VIDEO_TRACK_VOTE_CANDIDATE_FLOOR: ${VIDEO_TRACK_VOTE_CANDIDATE_FLOOR:-0.70}
+      VIDEO_TRACK_VOTE_MIN_COUNT: ${VIDEO_TRACK_VOTE_MIN_COUNT:-2}
+      VIDEO_TRACK_VOTE_MIN_MARGIN: ${VIDEO_TRACK_VOTE_MIN_MARGIN:-0.05}
+      VIDEO_TRACK_VOTE_MIN_SUPPORT_RATIO: ${VIDEO_TRACK_VOTE_MIN_SUPPORT_RATIO:-0.60}
+      VIDEO_WORKER_ID: video-worker-2
+      VIDEO_WORKER_GPU_ID: 0
+      VIDEO_NATIVE_EXECUTABLE: /workspace/build/pipeline/mvision_video_worker
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["2"]
+              capabilities: [gpu]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+
   api:
     build:
       context: ./backend
@@ -119,16 +254,30 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET_FACES: mergenvision-faces
+      MINIO_BUCKET_VIDEOS: mergenvision-videos
       MODEL_VERSION: arcface_r50_webface4m_v1
       PREPROCESS_VERSION: five-point-umeyama-112x112
       DETECTOR_VERSION: yolov8n-face-v1
       ALIGNMENT_VERSION: umeyama-5point-112x112
-      RECOGNITION_THRESHOLD: ${RECOGNITION_THRESHOLD:-0.55}
-      ANONYMOUS_THRESHOLD: ${ANONYMOUS_THRESHOLD:-0.40}
+      RECOGNITION_THRESHOLD: ${RECOGNITION_THRESHOLD:-0.90}
+      ANONYMOUS_THRESHOLD: ${ANONYMOUS_THRESHOLD:-0.90}
       MIN_CONFIDENCE: ${MIN_CONFIDENCE:-0.25}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       GPU_WORKER_SOCKETS: /run/mvision/worker-0.sock,/run/mvision/worker-1.sock,/run/mvision/worker-2.sock
       GPU_WORKER_TIMEOUT_SECONDS: ${GPU_WORKER_TIMEOUT_SECONDS:-120}
+      VIDEO_MAX_UPLOAD_BYTES: ${VIDEO_MAX_UPLOAD_BYTES:-524288000}
+      VIDEO_MAX_DURATION_SECONDS: ${VIDEO_MAX_DURATION_SECONDS:-300}
+      VIDEO_ALLOWED_CONTAINERS: ${VIDEO_ALLOWED_CONTAINERS:-mp4,mov,avi,matroska}
+      VIDEO_ALLOWED_CODECS: ${VIDEO_ALLOWED_CODECS:-h264,hevc,mjpeg,mpeg4}
+      VIDEO_RETENTION_SECONDS: ${VIDEO_RETENTION_SECONDS:-604800}
+      VIDEO_DEFAULT_SAMPLING_MODE: ${VIDEO_DEFAULT_SAMPLING_MODE:-frames_per_second}
+      VIDEO_DEFAULT_FRAMES_PER_SECOND: ${VIDEO_DEFAULT_FRAMES_PER_SECOND:-2}
+      VIDEO_PROBE_TIMEOUT_SECONDS: ${VIDEO_PROBE_TIMEOUT_SECONDS:-30}
+      VIDEO_TRACK_RECONCILIATION_THRESHOLD: ${VIDEO_TRACK_RECONCILIATION_THRESHOLD:-0.90}
+      VIDEO_TRACK_VOTE_CANDIDATE_FLOOR: ${VIDEO_TRACK_VOTE_CANDIDATE_FLOOR:-0.70}
+      VIDEO_TRACK_VOTE_MIN_COUNT: ${VIDEO_TRACK_VOTE_MIN_COUNT:-2}
+      VIDEO_TRACK_VOTE_MIN_MARGIN: ${VIDEO_TRACK_VOTE_MIN_MARGIN:-0.05}
+      VIDEO_TRACK_VOTE_MIN_SUPPORT_RATIO: ${VIDEO_TRACK_VOTE_MIN_SUPPORT_RATIO:-0.60}
     ports:
       - "8000:8000"
     depends_on:
@@ -150,6 +299,8 @@ services:
       - ./backend/alembic.ini:/app/alembic.ini
       - ./backend/pyproject.toml:/app/pyproject.toml:ro
       - ./backend/tests:/app/tests:ro
+      - ./backend/scripts:/app/scripts:ro
+      - ./backend/models:/app/models:ro
       - worker_sockets:/run/mvision
 
   frontend:

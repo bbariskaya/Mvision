@@ -109,6 +109,8 @@ class VideoJobRepository:
         worker_id: str,
         lease_token: str,
         person_count: int,
+        *,
+        processed_frames: int,
     ) -> bool:
         job = await session.get(VideoJob, job_id)
         if job is None or job.worker_id != worker_id or job.lease_token != lease_token:
@@ -117,6 +119,7 @@ class VideoJobRepository:
         job.stage = "completed"
         job.progress_percent = 100.0
         job.person_count = person_count
+        job.processed_frames = max(job.processed_frames, processed_frames)
         job.completed_at = datetime.datetime.now(datetime.UTC)
         self._clear_lease(job)
         await session.flush()
@@ -154,6 +157,27 @@ class VideoJobRepository:
         job.status = "cancelled"
         job.stage = "cancelled"
         job.cancelled_at = datetime.datetime.now(datetime.UTC)
+        self._clear_lease(job)
+        await session.flush()
+        return True
+
+    async def release_for_retry(
+        self,
+        session: AsyncSession,
+        job_id: str,
+        worker_id: str,
+        lease_token: str,
+        *,
+        available_at: datetime.datetime,
+        error_code: str,
+    ) -> bool:
+        job = await session.get(VideoJob, job_id)
+        if job is None or job.worker_id != worker_id or job.lease_token != lease_token:
+            return False
+        job.status = "pending"
+        job.stage = "queued"
+        job.available_at = available_at
+        job.error_code = error_code
         self._clear_lease(job)
         await session.flush()
         return True

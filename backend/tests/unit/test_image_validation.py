@@ -1,28 +1,36 @@
-import pytest
+from io import BytesIO
 
-from app.services.exceptions import ValidationError
-from app.services.image_validation import validate_jpeg
+from PIL import Image
 
-
-def test_accepts_complete_jpeg_marker_sequence():
-    validate_jpeg(b"\xff\xd8payload\xff\xd9", 1024)
+from app.services.image_validation import normalize_image
 
 
-@pytest.mark.parametrize(
-    ("data", "code"),
-    [
-        (b"", "EMPTY_IMAGE"),
-        (b"not-jpeg", "INVALID_IMAGE"),
-        (b"\xff\xd8truncated", "INVALID_IMAGE"),
-    ],
-)
-def test_rejects_invalid_images(data, code):
-    with pytest.raises(ValidationError) as caught:
-        validate_jpeg(data, 1024)
-    assert caught.value.error_code == code
+def test_normalize_image_converts_png_to_jpeg():
+    source = BytesIO()
+    Image.new("RGBA", (2, 2), (255, 0, 0, 128)).save(source, format="PNG")
+
+    result = normalize_image(source.getvalue(), "image/png", 1024)
+
+    assert result.startswith(b"\xff\xd8")
+    assert result.endswith(b"\xff\xd9")
 
 
-def test_rejects_oversized_image():
-    with pytest.raises(ValidationError) as caught:
-        validate_jpeg(b"\xff\xd8payload\xff\xd9", 4)
-    assert caught.value.error_code == "IMAGE_TOO_LARGE"
+def test_normalize_image_repairs_jpeg_without_end_marker():
+    source = BytesIO()
+    Image.new("RGB", (8, 8), (0, 255, 0)).save(source, format="JPEG")
+    truncated = source.getvalue()[:-2]
+
+    result = normalize_image(truncated, "image/jpeg", 4096)
+
+    assert result.startswith(b"\xff\xd8")
+    assert result.endswith(b"\xff\xd9")
+
+
+def test_normalize_image_uses_content_signature_when_png_is_labeled_jpeg():
+    source = BytesIO()
+    Image.new("RGB", (2, 2), (0, 0, 255)).save(source, format="PNG")
+
+    result = normalize_image(source.getvalue(), "image/jpeg", 1024)
+
+    assert result.startswith(b"\xff\xd8")
+    assert result.endswith(b"\xff\xd9")

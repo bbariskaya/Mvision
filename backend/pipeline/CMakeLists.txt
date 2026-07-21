@@ -45,6 +45,48 @@ target_link_libraries(test_protocol PRIVATE mvision_protocol)
 target_compile_options(test_protocol PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_test(NAME protocol COMMAND test_protocol)
 
+add_library(mvision_video_protocol src/video_protocol.cpp)
+target_include_directories(
+    mvision_video_protocol
+    PUBLIC include
+    PRIVATE ${MSGPACK_INCLUDE_DIR}
+)
+target_compile_options(mvision_video_protocol PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(test_video_protocol tests/test_video_protocol.cpp)
+target_link_libraries(test_video_protocol PRIVATE mvision_video_protocol)
+target_compile_options(test_video_protocol PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME video_protocol COMMAND test_video_protocol)
+
+add_library(mvision_video_pipeline src/video_pipeline.cpp)
+target_include_directories(
+    mvision_video_pipeline
+    PUBLIC include
+    PRIVATE ${DEEPSTREAM_INCLUDE_DIR}
+)
+target_link_libraries(
+    mvision_video_pipeline
+    PUBLIC
+        mvision_video_protocol
+        PkgConfig::GSTREAMER
+        CUDA::cudart
+        ${NVDS_GST_META_LIBRARY}
+        ${NVDS_META_LIBRARY}
+)
+target_compile_options(
+    mvision_video_pipeline
+    PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers
+)
+
+add_executable(test_video_aggregation tests/test_video_aggregation.cpp)
+target_link_libraries(test_video_aggregation PRIVATE mvision_video_pipeline)
+target_compile_options(test_video_aggregation PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME video_aggregation COMMAND test_video_aggregation)
+
+add_executable(mvision_video_worker src/video_worker_main.cpp)
+target_link_libraries(mvision_video_worker PRIVATE mvision_video_pipeline)
+target_compile_options(mvision_video_worker PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
 add_library(mvision_pipeline src/image_source_pool.cpp)
 target_include_directories(mvision_pipeline PUBLIC include PRIVATE ${DEEPSTREAM_INCLUDE_DIR})
 target_link_libraries(

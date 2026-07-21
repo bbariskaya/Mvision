@@ -59,3 +59,17 @@ class ProcessRecordRepository:
         )
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def cancel(
+        self,
+        session: AsyncSession,
+        process_id: str,
+    ) -> ProcessRecord | None:
+        stmt = (
+            update(ProcessRecord)
+            .where(ProcessRecord.process_id == process_id)
+            .values(status="cancelled", completed_at=func.now())
+            .returning(ProcessRecord)
+        )
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()

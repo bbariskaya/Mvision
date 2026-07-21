@@ -12,7 +12,7 @@ from app.infrastructure.database.repositories import (
 from app.infrastructure.database.session import AsyncSessionLocal
 from app.infrastructure.gpu.worker_pool import GpuWorkerError, GpuWorkerPool
 from app.services.exceptions import InferenceError, NotFoundError, ValidationError
-from app.services.face_matcher import FaceMatcher
+from app.services.face_matcher import FaceMatch, FaceMatcher
 from app.services.face_sample_persistence_service import FaceSamplePersistenceService
 
 
@@ -66,12 +66,11 @@ class EnrollmentService:
             await session.commit()
         try:
             result = await self._workers.process(image, process_id)
-            if len(result.faces) != 1:
-                code = "NO_FACE" if not result.faces else "MULTIPLE_FACES"
+            if not result.faces:
                 raise ValidationError(
-                    "Enrollment image must contain exactly one face", code, process_id
+                    "Enrollment image must contain a face", "NO_FACE", process_id
                 )
-            detection = result.faces[0]
+            detection = self._select_face(result.faces)
             embedding = list(detection.embedding)
             if face_id is not None:
                 async with AsyncSessionLocal() as session:
@@ -81,7 +80,7 @@ class EnrollmentService:
                 selected_face_id = identity.face_id
             else:
                 match = await self._matcher.match(embedding)
-                selected_face_id = match.identity.face_id if match else new_uuid7()
+                selected_face_id = self._matching_identity_id(match, clean_name) or new_uuid7()
 
             async with AsyncSessionLocal() as session:
                 existing = await self._identity_repo.get_active_by_id(session, selected_face_id)
@@ -161,12 +160,28 @@ class EnrollmentService:
         except GpuWorkerError as exc:
             await self._fail(process_id, "INFERENCE_ERROR")
             raise InferenceError(str(exc), process_id) from exc
+
         except Exception as exc:
             await self._fail(process_id, "ENROLLMENT_ERROR")
             if hasattr(exc, "process_id"):
                 exc.process_id = process_id
                 raise
             raise InferenceError(str(exc), process_id) from exc
+
+    @staticmethod
+    def _select_face(faces):
+        return max(faces, key=lambda face: face.width * face.height)
+
+    @staticmethod
+    def _matching_identity_id(match: FaceMatch | None, requested_name: str) -> str | None:
+        if match is None or getattr(match.identity, "lifecycle_status", None) != "known":
+            return None
+        existing_name = getattr(match.identity, "name", None)
+        if not isinstance(existing_name, str):
+            return None
+        if existing_name.strip().casefold() != requested_name.strip().casefold():
+            return None
+        return str(match.identity.face_id)
 
     async def reject(self, process_id: str, code: str) -> None:
         async with AsyncSessionLocal() as session:

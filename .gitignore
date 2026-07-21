@@ -12,3 +12,6 @@ models/
 # Native build and CTest output
 build/
 Testing/
+tmp/
+test_videos/
+tmp/

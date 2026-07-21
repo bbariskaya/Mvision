@@ -1,0 +1,62 @@
+services:
+  friends-api:
+    image: mvision-api
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    environment: &friends-environment
+      DATABASE_URL: postgresql+psycopg://mergen:mergen@postgres:5432/mergenvision_friends
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: friends_arcface_r50_v1
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_FACES: mergenvision-friends-faces
+      MINIO_BUCKET_VIDEOS: mergenvision-friends-videos
+      RECOGNITION_THRESHOLD: "0.40"
+      ANONYMOUS_THRESHOLD: "0.78"
+      VIDEO_TRACK_RECONCILIATION_THRESHOLD: "0.95"
+      VIDEO_TRACK_VOTE_CANDIDATE_FLOOR: "0.40"
+      VIDEO_TRACK_VOTE_MIN_COUNT: "2"
+      VIDEO_TRACK_VOTE_MIN_MARGIN: "0.05"
+      VIDEO_TRACK_VOTE_MIN_SUPPORT_RATIO: "0.60"
+      GPU_WORKER_SOCKETS: /run/mvision/worker-0.sock,/run/mvision/worker-1.sock,/run/mvision/worker-2.sock
+    ports:
+      - "8001:8000"
+    networks:
+      - mvision
+    volumes:
+      - worker_sockets:/run/mvision
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
+    restart: unless-stopped
+
+  friends-video-worker-0:
+    image: mvision-gpu-worker:local
+    command: ["python3", "-m", "app.worker.video_worker_main"]
+    environment:
+      <<: *friends-environment
+      VIDEO_WORKER_ID: friends-video-worker-0
+      VIDEO_WORKER_GPU_ID: "0"
+      VIDEO_NATIVE_EXECUTABLE: /workspace/build/pipeline/mvision_video_worker
+    networks:
+      - mvision
+    volumes:
+      - ./backend/app:/workspace/backend/app:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+networks:
+  mvision:
+    external: true
+    name: mvision_default
+
+volumes:
+  worker_sockets:
+    external: true
+    name: mvision_worker_sockets

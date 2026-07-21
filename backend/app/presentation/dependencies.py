@@ -9,10 +9,12 @@ from app.infrastructure.database.repositories import (
     ProcessRecordRepository,
     RecognitionResultRepository,
     VideoJobRepository,
+    VideoTrackRepository,
 )
 from app.infrastructure.gpu.worker_pool import GpuWorkerPool
 from app.infrastructure.object_storage.minio_adapter import MinIOAdapter
 from app.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
+from app.infrastructure.video.native_runner import NativeVideoRunner
 from app.services.enrollment_service import EnrollmentService
 from app.services.face_matcher import FaceMatcher
 from app.services.face_sample_persistence_service import FaceSamplePersistenceService
@@ -20,6 +22,10 @@ from app.services.identity_service import IdentityService
 from app.services.process_query_service import ProcessQueryService
 from app.services.recognition_service import RecognitionService
 from app.services.video_job_service import VideoJobService
+from app.services.video_processor import VideoJobProcessor
+from app.services.video_result_service import VideoResultService
+from app.services.video_tracking_service import VideoTrackingService
+from app.services.video_identity_voting_service import VideoIdentityVotingService
 from app.services.video_upload_service import VideoUploadService
 
 
@@ -34,6 +40,8 @@ class ServiceContainer:
     processes: ProcessQueryService
     video_uploads: VideoUploadService
     video_jobs: VideoJobService
+    video_results: VideoResultService
+    video_processor: VideoJobProcessor
 
 
 @lru_cache
@@ -45,6 +53,7 @@ def get_container() -> ServiceContainer:
     result_repo = RecognitionResultRepository()
     event_repo = ProcessEventRepository()
     video_job_repo = VideoJobRepository()
+    video_track_repo = VideoTrackRepository()
     minio = MinIOAdapter(settings)
     qdrant = QdrantAdapter(settings)
     workers = GpuWorkerPool(settings.gpu_socket_paths, settings.gpu_worker_timeout_seconds)
@@ -78,7 +87,28 @@ def get_container() -> ServiceContainer:
     video_uploads = VideoUploadService(
         settings, minio, video_job_repo, process_repo, event_repo
     )
-    video_jobs = VideoJobService(video_job_repo)
+    video_jobs = VideoJobService(video_job_repo, video_track_repo, minio)
+    video_tracking = VideoTrackingService(
+        settings.video_track_reconciliation_threshold,
+        settings.video_appearance_max_gap_seconds,
+    )
+    video_voter = VideoIdentityVotingService(settings, matcher)
+    video_results = VideoResultService(
+        settings,
+        video_tracking,
+        video_voter,
+        samples,
+        result_repo,
+        video_track_repo,
+    )
+    video_processor = VideoJobProcessor(
+        settings,
+        minio,
+        video_job_repo,
+        process_repo,
+        NativeVideoRunner(settings),
+        video_results.finalize,
+    )
     return ServiceContainer(
         settings,
         minio,
@@ -89,6 +119,8 @@ def get_container() -> ServiceContainer:
         processes,
         video_uploads,
         video_jobs,
+        video_results,
+        video_processor,
     )
 
 

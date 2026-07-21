@@ -1,11 +1,15 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, Response, UploadFile, status
 
 from app.infrastructure.database.ids import new_uuid7
 from app.presentation.dependencies import get_video_job_service, get_video_upload_service
-from app.presentation.schemas.videos import VideoJobResponse, VideoSubmitResponse
+from app.presentation.schemas.videos import (
+    VideoJobResponse,
+    VideoResultResponse,
+    VideoSubmitResponse,
+)
 from app.services.exceptions import ValidationError
 from app.services.video_job_service import VideoJobService
 from app.services.video_upload_service import VideoUploadService
@@ -53,3 +57,26 @@ async def cancel_video_job(
     service: Annotated[VideoJobService, Depends(get_video_job_service)],
 ) -> dict:
     return await service.cancel(_job_id(job_id))
+
+
+@router.get("/jobs/{job_id}/result", response_model=VideoResultResponse)
+async def get_video_result(
+    job_id: str,
+    service: Annotated[VideoJobService, Depends(get_video_job_service)],
+) -> dict:
+    return await service.result(_job_id(job_id))
+
+
+@router.get("/jobs/{job_id}/video")
+async def get_video_source(
+    job_id: str,
+    service: Annotated[VideoJobService, Depends(get_video_job_service)],
+    range_header: Annotated[str | None, Header(alias="Range")] = None,
+) -> Response:
+    source = await service.source(_job_id(job_id), range_header)
+    return Response(
+        content=source["data"],
+        media_type=source["content_type"],
+        status_code=source["status_code"],
+        headers=source["headers"],
+    )

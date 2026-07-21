@@ -25,10 +25,10 @@ __device__ float sample_channel(const std::uint8_t *image, std::size_t pitch, fl
   const int y1 = min(y0 + 1, kAlignedFaceHeight - 1);
   const float dx = x - x0;
   const float dy = y - y0;
-  const float top = image[y0 * pitch + x0 * 3 + channel] * (1.0F - dx) +
-                    image[y0 * pitch + x1 * 3 + channel] * dx;
-  const float bottom = image[y1 * pitch + x0 * 3 + channel] * (1.0F - dx) +
-                       image[y1 * pitch + x1 * 3 + channel] * dx;
+  const float top = image[y0 * pitch + x0 * 4 + channel] * (1.0F - dx) +
+                    image[y0 * pitch + x1 * 4 + channel] * dx;
+  const float bottom = image[y1 * pitch + x0 * 4 + channel] * (1.0F - dx) +
+                       image[y1 * pitch + x1 * 4 + channel] * dx;
   return top * (1.0F - dy) + bottom * dy;
 }
 

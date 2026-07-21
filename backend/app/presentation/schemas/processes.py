@@ -1,6 +1,8 @@
 from datetime import datetime
 from typing import Any
 
+from pydantic import Field
+
 from app.presentation.schemas.faces import ApiModel, FaceResultResponse
 
 
@@ -16,6 +18,7 @@ class ProcessResponse(ApiModel):
     status: str
     face_count: int
     error_code: str | None
+    details: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     completed_at: datetime | None
     faces: list[FaceResultResponse]

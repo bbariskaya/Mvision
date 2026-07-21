@@ -9,6 +9,7 @@ from app.presentation.dependencies import (
     get_enrollment_service,
     get_identity_service,
     get_recognition_service,
+    get_video_job_service,
 )
 from app.presentation.schemas.faces import (
     DeleteFaceResponse,
@@ -17,22 +18,24 @@ from app.presentation.schemas.faces import (
     FaceUpdateRequest,
     RecognitionResponse,
 )
+from app.presentation.schemas.videos import FaceAppearancesResponse
 from app.services.enrollment_service import EnrollmentService
 from app.services.exceptions import ValidationError
 from app.services.identity_service import IdentityService
-from app.services.image_validation import validate_jpeg
+from app.services.image_validation import normalize_image
 from app.services.recognition_service import RecognitionService
+from app.services.video_job_service import VideoJobService
 
 router = APIRouter(prefix="/api/v1/faces", tags=["faces"])
 
 
 async def _read_image(image: UploadFile) -> bytes:
     settings = get_container().settings
-    if image.content_type not in {"image/jpeg", "image/jpg"}:
-        raise ValidationError("Only JPEG images are supported", "UNSUPPORTED_MEDIA_TYPE")
+    content_type = image.content_type or ""
+    if content_type not in {"image/jpeg", "image/jpg", "image/png"}:
+        raise ValidationError("Only JPEG and PNG images are supported", "UNSUPPORTED_MEDIA_TYPE")
     data = await image.read(settings.max_upload_bytes + 1)
-    validate_jpeg(data, settings.max_upload_bytes)
-    return data
+    return normalize_image(data, content_type, settings.max_upload_bytes)
 
 
 def _validate_uuid(value: str, field: str = "faceId") -> str:
@@ -108,3 +111,11 @@ async def get_face_history(
     service: Annotated[IdentityService, Depends(get_identity_service)],
 ) -> dict:
     return await service.history(_validate_uuid(face_id))
+
+
+@router.get("/{face_id}/appearances", response_model=FaceAppearancesResponse)
+async def get_face_appearances(
+    face_id: str,
+    service: Annotated[VideoJobService, Depends(get_video_job_service)],
+) -> dict:
+    return await service.appearances(_validate_uuid(face_id))

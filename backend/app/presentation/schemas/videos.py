@@ -39,3 +39,56 @@ class VideoJobResponse(ApiModel):
     started_at: datetime | None
     completed_at: datetime | None
     cancelled_at: datetime | None
+
+
+class VideoDetectionResponse(ApiModel):
+    frame: int
+    timestamp: float
+    bounding_box: dict[str, float]
+    confidence: float
+    landmarks: list[dict[str, float]]
+
+
+class VideoAppearanceIntervalResponse(ApiModel):
+    start: float
+    end: float
+    start_frame: int
+    end_frame: int
+
+
+class VideoPersonResponse(ApiModel):
+    face_id: str
+    track_id: str
+    status: Literal["known", "anonymous", "new_anonymous"]
+    name: str | None
+    metadata: dict[str, Any]
+    first_seen: float
+    last_seen: float
+    total_duration: float
+    confidence: float
+    appearances: list[VideoAppearanceIntervalResponse]
+    detections: list[VideoDetectionResponse]
+
+
+class VideoResultResponse(ApiModel):
+    job_id: str
+    process_id: str
+    status: Literal["completed"]
+    video: VideoMetadataResponse
+    person_count: int
+    persons: list[VideoPersonResponse]
+
+
+class FaceVideoAppearanceResponse(ApiModel):
+    job_id: str
+    track_id: str
+    first_seen: float
+    last_seen: float
+    intervals: list[VideoAppearanceIntervalResponse]
+    source_available: bool
+    created_at: datetime
+
+
+class FaceAppearancesResponse(ApiModel):
+    face_id: str
+    appearances: list[FaceVideoAppearanceResponse]

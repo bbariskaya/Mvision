@@ -33,6 +33,7 @@ class ProcessQueryService:
             "status": process.status,
             "face_count": process.face_count,
             "error_code": process.error_code,
+            "details": process.details,
             "created_at": process.created_at,
             "completed_at": process.completed_at,
             "faces": [
