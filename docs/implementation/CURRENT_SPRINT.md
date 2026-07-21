@@ -1,111 +1,208 @@
-# Sprint 02 - DeepStream GPU Hot Path
+# Sprint 03 - Tek Kamera RTSP Canli Yayin
+
+## Yetki ve Durum
+
+Kullanici 2026-07-21 tarihinde Phase 2'nin tamamlandigini ve sonraki urun
+hareketinin livestream oldugunu acikca belirledi. Bu sprint Phase 3 canli akis
+calismasini yetkilendirir. Phase 1 ve Phase 2 belgelerindeki RTSP non-goal
+ifadeleri yalniz kendi tamamlanmis fazlarinin siniridir; bu sprinti engellemez.
+
+Packet 0 belgeleri, Packet 1 compatibility/control-plane contracts ve Packet 2
+protocol/native track state tamamlanmistir. Native RTSP ingest, reconnect,
+inference/output pipeline, supervisor ve required self-hosted
+OpenTelemetry/Prometheus/Loki/Tempo/Grafana source'u henuz yazilmamistir.
 
 ## Objective
 
-Deliver the real Phase 1 image identity vertical slice defined by
-`requirements/ProjectRequirements.md`, using the approved YOLOv8-Face + ArcFace R50 models and a
-persistent native DeepStream 9 data plane. Phase 1 must complete before any video implementation.
+Mevcut YOLOv8-Face, NvDCF, GPU five-point alignment, ArcFace R50, Qdrant
+gallery ve track-level identity voting zincirini, tek aktif RTSP kamera icin
+uzun sure calisabilen bir DeepStream 9 pipeline'ina tasimak. Ilk teslim;
+guvenli kamera lifecycle'i, reconnect, quality-gated temporal evidence,
+durable detection events, health/metrics ve annotate edilmis RTSP cikisi
+uretir.
 
-Detailed execution plan:
-`docs/superpowers/plans/2026-07-20-phase1-deepstream-implementation.md`.
+## Approved Architecture
 
-## Active Packet
+- Design:
+  `docs/superpowers/specs/2026-07-21-single-camera-livestream-design.md`
+- Execution plan:
+  `docs/superpowers/plans/2026-07-21-single-camera-livestream.md`
+- Required observability design:
+  `docs/superpowers/specs/2026-07-21-opentelemetry-observability-design.md`
+- Repository overview: `README.md`
 
-Packet 2 / Tasks 3-4: persistent JPEG ingress and GPU detector postprocess.
+## Packet 0 - Source-Verified Design and Plan
 
-Native protocol/build scaffolding and the persistent multi-slot GPU ingress are operational. The
-current focus is fusing YOLO DFL decode/NMS/landmark compaction onto the GPU before nvinfer output
-crosses the host boundary.
+- [x] Mevcut image/video source, config, test ve runtime envanteri incelendi.
+- [x] Alti upstream reference gecici dizine clone edilerek implementation
+  source'u, commit ve license bilgisi incelendi.
+- [x] DeepStream 9 `nvurisrcbin`, reconnect, tensor metadata, NTP ve official
+  RTSP output davranislari current docs/source ile kontrol edildi.
+- [x] Source-verified design document'i tamamla.
+- [x] Exact dosya, interface, RED/GREEN test ve acceptance adimlari olan
+  implementation planini tamamla.
+- [x] README ile design/plan arasindaki status, link ve terminology uyumunu
+  dogrula.
 
-## Completed Packet
+## Packet 1 - Compatibility and Contracts
 
-### Packet 1 - Runtime and Model Contract Gate
+- [x] Installed DeepStream 9/GStreamer/GstRtspServer factory ve property
+  capability reproducer'i.
+- [x] RTSP URI validation, Fernet encryption/rotation, HMAC fingerprint ve log
+  redaction.
+- [x] Additive `live_camera`, `live_camera_run` ve `live_detection_event`
+  migration/model/repository contracts.
+- [x] Write-only URI camera API, durable desired state, tek aktif kamera limiti
+  ve sanitized response contracts.
 
-- [x] Frozen artifact SHA test written RED-first and verified GREEN.
-- [x] Deterministic ONNX inspector implemented in a pinned Python 3.12 image.
-- [x] YOLO contract verified: input `[B,3,H,W]`, three 80-channel pose heads,
-  `kpt_shape=[5,3]`, stride 32.
-- [x] ArcFace contract verified: input `[B,3,112,112]`, graph-owned
-  `(input - 127.5) / 128`, output `[B,512]`, `LpNormalization` present.
-- [x] Runtime recorded: 3x Quadro RTX 8000, driver 580.105.08, CUDA 13.0,
-  TensorRT 10.16, DeepStream 9.0.0, GStreamer 1.24.2.
-- [x] Upstream decisions refreshed from real source and commit hashes.
-- [x] Internal implementation approval recorded; external/commercial model release remains a legal
-  review gate.
+Model/engine live SGIE compatibility, NvDCF A/B, gercek RTSP reconnect/teardown,
+snapshot storage ve output pipeline acceptance sonraki packet'lerde kalir. Bu
+gate'lerden biri fail olursa production davranisi uydurulmaz; ilgili packet
+`BLOCKED` olarak raporlanir.
 
-## Packet 1 Evidence
+## Packet 2 - Protocol and Native Track State
 
-```text
-docker run ... pytest tests/contract/test_model_inventory.py -v
-5 passed
+- [x] 4 MiB bounded, network-order framed MessagePack command/event codec.
+- [x] Python/C++ parity for Start, IdentityAssignment, Stop and native event
+  payloads.
+- [x] UUID/generation/revision, finite metric, embedding norm, landmark and
+  512 KiB snapshot validation.
+- [x] Deterministic shadow quality metrics and hard reject mask.
+- [x] Capacity-10 evidence replacement, temporal/view diversity and deterministic
+  tie breaks.
+- [x] Immutable Known assignment state and stale revision rejection.
+- [x] ASan/UBSan 100,000-observation bounded-capacity stress.
 
-docker compose ... ruff check app tests scripts
-All checks passed
+## First Milestone Deliverables
 
-docker compose ... ruff format --check app tests scripts
-51 files already formatted
+- Tek aktif kamera limiti ve durable desired/runtime state.
+- RTSP URI credential encryption, write-only API ve log redaction.
+- `nvurisrcbin` tabanli NVDEC/NVMM ingest ve iki katmanli reconnect.
+- YOLOv8-Face -> NvDCF -> GPU alignment -> ArcFace R50 zinciri.
+- Frame-rate probe icinde database/network/storage cagrisi olmayan bounded
+  native track evidence bank.
+- Duplex framed MessagePack command/event protocol.
+- Named-only Qdrant voting, absolute threshold, top-2 margin ve track boyunca
+  immutable Known etiketi.
+- Quality reject reason'lari, shadow calibration ve bounded best-shot secimi.
+- PostgreSQL camera/runtime/detection event kayitlari.
+- Private object storage'da accepted aligned face snapshot'i.
+- Bbox, label, cosine score, detector score ve bes landmark iceren OSD.
+- H.264 annotate RTSP output.
+- Health, queue/backpressure ve reconnect metrikleri.
+- Fault injection, repeated teardown ve soak acceptance.
 
-docker compose ... mypy app tests scripts
-Success: no issues found in 51 source files
+## Invariants
 
-make phase1-s1-acceptance
-37 passed; migration 58ecca5e38a3 (head); git diff --check clean
+- `face_id` global identity anahtaridir; native `track_id` yalniz camera-run
+  local hareket kimligidir.
+- Ayni native track icinde Known label degismez; ambiguous sonuc Unknown kalir.
+- Anonymous gallery adayi named identity'yi baskilayamaz.
+- Qdrant adayi PostgreSQL active lifecycle ile dogrulanmadan final kabul
+  edilmez.
+- Full decoded frame, RGB/BGR frame veya inference tensor'u Python/API
+  process'ine tasinmaz.
+- Pad probe HTTP, PostgreSQL, Qdrant veya object storage cagirmaz.
+- Queue'lar bounded'dir; video output viewer backpressure'i inference'i
+  durdurmaz.
+- RTSP URI/credential process argument, log, error, metric label veya API
+  response'a girmez.
+- Mevcut PostgreSQL, Qdrant ve object-storage volume'lari silinmez veya reset
+  edilmez.
+- Existing image/video endpoint ve identity lifecycle davranisi korunur.
+
+## First Milestone Non-Goals
+
+Bu maddeler yalniz ilk tek-kamera milestone'u icin ertelenmistir:
+
+- Runtime dynamic multi-camera batching.
+- Birden fazla aktif kamera.
+- Cross-camera body/person ReID.
+- Browser-native WebRTC/HLS player.
+- Zone/rule engine ve Telegram/e-mail/hosted alert kanallari.
+- Redis, Celery, Kafka veya managed event bus.
+- Kubernetes, distributed scheduler veya microservice parcasi.
+- Model, detector, ArcFace embedding space veya threshold'u kanitsiz degistirme.
+
+## Runtime Inventory
+
+- GPU: 3x Quadro RTX 8000 48 GB.
+- Driver: `580.105.08`.
+- CUDA: `13.0`.
+- TensorRT: `10.16`.
+- DeepStream: `9.0.0`.
+- GStreamer: `1.24.2`.
+- Python: `3.12`.
+- Existing detector: YOLOv8-Face with five landmarks.
+- Existing recognizer: ArcFace R50, normalized 512-D embedding.
+- Existing stores: PostgreSQL, Qdrant and MinIO-compatible object storage.
+
+## Acceptance Commands
+
+Document packet:
+
+```bash
+test -f docs/superpowers/specs/2026-07-21-single-camera-livestream-design.md
+test -f docs/superpowers/plans/2026-07-21-single-camera-livestream.md
+git diff --check
 ```
 
-Generated, uncommitted runtime report:
-`/tmp/opencode/mvision-model-contract.json`.
-
-### Packet 2 evidence so far
-
-- Python MessagePack frame contract: `6 passed`.
-- Native C++ protocol and real GPU ingress CTest: `2 passed`.
-- Persistent 16-slot `appsrc -> nvjpegdec -> NVMM -> nvstreammux` ingress: `1510.33 images/s` on
-  one RTX 8000.
-- YOLO FP16 dynamic engine, batch 1/64/256: built and benchmarked at `3104.05 images/s` ceiling for
-  batch 256 on one RTX 8000.
-- ArcFace FP16 dynamic engine, batch 1/64/256: built and benchmarked at `5136.51 faces/s` ceiling for
-  batch 256 on one RTX 8000.
-
-## Deliverables Remaining
-
-- Native C++17 worker process and Python/C++ protocol parity.
-- Request correlation across source slots and output batches.
-- GPU DFL decode/NMS/five-landmark compaction fused into the YOLO TensorRT engine.
-- Standard instance-mask landmark transport.
-- Official `nvdspreprocess` CUDA/NPP five-point alignment.
-- ArcFace SGIE and compact normalized embedding extraction.
-- GPU-only aligned JPEG evidence encoding.
-- Python GPU scheduler and full identity/storage lifecycle.
-- Recognition, enrollment, identity/sample, history, and process APIs.
-- Docker Compose deployment, restart acceptance, and measured throughput.
-
-## Non-Goals
-
-- Video upload, video jobs, sampling, tracking, or aggregation.
-- RTSP, webcam, live stream, camera lifecycle, or alerts.
-- UI.
-- Public bulk/dataset management API.
-- RetinaFace, GlintR100, SCRFD, or a second embedding space.
-- CPU decode/inference/postprocess/alignment/encoding fallback.
-- DeepStream Python bindings or patched system DeepStream libraries.
-- Model/dataset download, driver/system CUDA changes, or old collection reset.
-- Git commit/push without explicit user request.
-
-## Hard Stops
-
-- Active root/branch changes unexpectedly or user changes overlap target files.
-- Frozen model SHA/tensor contract changes.
-- Pinned DeepStream 9 devel image is unavailable or incompatible with driver 580.105.08.
-- Standard DeepStream metadata cannot carry landmarks into official `nvdspreprocess`.
-- Standard ArcFace SGIE cannot consume preprocess tensor meta without patched `nvinfer`.
-- GPU-native JPEG ingress/alignment/evidence encode cannot be runtime-verified.
-- A model/system dependency download or destructive storage action becomes necessary.
+Implementation packet commands are defined task-by-task in the execution plan.
+No implementation packet receives PASS from unit mocks alone; real RTSP,
+DeepStream GPU, PostgreSQL, Qdrant and object-storage evidence is required at
+the relevant gates.
 
 ## Evidence Classification
 
-- `SOURCE_VERIFIED`: model graph, hashes, current code, configs, and upstream source observed.
-- `RUNTIME_VERIFIED`: host NVIDIA runtime and Sprint 01 real dependency tests executed.
-- `NOT_PROVEN`: native worker, engine inference, GPU-only boundary, identity vertical slice,
-  throughput, three-GPU scaling.
-- `RELEASE_BLOCKED_LEGAL_REVIEW`: active model artifacts approved for internal implementation,
-  not approved here for external/commercial distribution.
+- `SOURCE_VERIFIED`: current image/video source, current configs, upstream
+  implementations, official DeepStream/GStreamer documentation.
+- `RUNTIME_VERIFIED`: installed NVIDIA runtime and completed image/video GPU
+  paths recorded by prior packets.
+- `NOT_PROVEN`: live RTSP ingest, reconnect, live SGIE metadata coverage,
+  annotated RTSP output, live snapshots, 24-hour soak and multi-camera scale.
+- `RELEASE_BLOCKED_LEGAL_REVIEW`: model/weight provenance, NVIDIA EULA release
+  obligations and object-storage distribution choice.
+
+## Hard Stops
+
+- Exact installed plugin/property davranisi reproducer ile kanitlanamiyor.
+- Live pipeline, aligned evidence veya RTSP output yalniz CPU fallback ile
+  calisabiliyor.
+- Source teardown request pad/resource leak veya repeated restart crash
+  uretiyor.
+- SGIE embedding coverage/norm parity existing video pipeline ile korunamiyor.
+- RTSP credential redaction/encryption testi fail ediyor.
+- Schema degisikligi additive migration ile yapilamiyor.
+- Gercek GPU/dependency acceptance calistirilamiyor fakat sonuc PASS diye
+  raporlanmak isteniyor.
+- Model/engine/system CUDA/driver degisikligi gerekiyor.
+- Destructive volume/data islemi gerekiyor.
+
+## Current Evidence
+
+- Friends uploaded-video run: `6665/6665` frames, 122 canonical tracks and
+  8934 detections.
+- Native video aggregation/protocol, face alignment and detector parser tests
+  passed in the previous packet.
+- Packet 0 documentation: `PASS`.
+- Packet 1 installed runtime contract: `PASS`; required 11 factories, five
+  `nvurisrcbin` properties and GstRtspServer are present in the pinned runtime.
+- Packet 1 URI security tests: `12 passed`.
+- Packet 1 persistence integration tests: `7 passed`; migration
+  `7d6f0b3a9c21` upgrade/downgrade/re-upgrade verified against test PostgreSQL.
+- Packet 1 camera service/API tests: `12 passed`; camera/video contract set:
+  `8 passed`.
+- Packet 2 Python protocol/parity tests: `32 passed`; native protocol and track
+  state tests: `PASS`.
+- Observability protocol amendment: W3C trace context and bounded native
+  operation parity `49 passed`; C++ remains OTLP/network-free.
+- Packet-wide Python unit/contract suite: `129 passed`; isolated persistence/API
+  integration suite: `44 passed`.
+- Existing native protocol/video aggregation binaries: `PASS`.
+- Native RTSP ingest, reconnect, live SGIE coverage, annotated RTSP output,
+  snapshots and soak: `NOT_PROVEN`.
+- OpenTelemetry trace continuity, telemetry privacy/cardinality, Collector,
+  Prometheus, Loki, Tempo, Grafana dashboards/correlations, retention,
+  fault-isolation and overhead A/B: `DESIGN_APPROVED`, implementation
+  `NOT_STARTED`.
+- No production volume reset or destructive data operation was performed.

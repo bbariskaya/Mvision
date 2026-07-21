@@ -77,9 +77,19 @@ class VideoError(ServiceError):
         super().__init__(message, message, error_code, status_code, process_id)
 
 
+class LiveCameraError(ServiceError):
+    def __init__(self, message: str, error_code: str, status_code: int):
+        super().__init__(message, message, error_code, status_code)
+
+
 def add_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ServiceError)
     async def service_error_handler(request: Request, exc: ServiceError) -> JSONResponse:
+        if isinstance(exc, LiveCameraError):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": {"code": exc.error_code}},
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content={

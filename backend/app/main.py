@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.presentation.dependencies import get_container
+from app.presentation.routers.cameras import router as cameras_router
 from app.presentation.routers.faces import router as faces_router
 from app.presentation.routers.health import router as health_router
 from app.presentation.routers.processes import router as processes_router
@@ -24,7 +25,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="MergenVision API",
-    description="Phase 1 Face Recognition API",
+    description="GPU-accelerated image, video, and livestream face recognition API",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -33,5 +34,6 @@ app.include_router(health_router, tags=["health"])
 app.include_router(faces_router)
 app.include_router(processes_router)
 app.include_router(videos_router)
+app.include_router(cameras_router)
 
 add_exception_handlers(app)

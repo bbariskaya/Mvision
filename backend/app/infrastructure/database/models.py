@@ -368,3 +368,152 @@ class VideoTrack(Base):
         Index("ix_video_track_face_id", "face_id"),
         Index("ix_video_track_face_seen", "face_id", "first_seen"),
     )
+
+
+class LiveCamera(Base):
+    __tablename__ = "live_camera"
+
+    camera_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=new_uuid7
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    uri_ciphertext: Mapped[str] = mapped_column(String(8192), nullable=False)
+    uri_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    desired_state: Mapped[str] = mapped_column(String(16), nullable=False, default="stopped")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    deleted_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "desired_state IN ('stopped', 'running')", name="live_camera_desired_state_check"
+        ),
+        Index(
+            "uq_live_camera_active_name",
+            "name",
+            unique=True,
+            postgresql_where="deleted_at IS NULL",
+        ),
+        Index(
+            "uq_live_camera_active_uri_fingerprint",
+            "uri_fingerprint",
+            unique=True,
+            postgresql_where="deleted_at IS NULL",
+        ),
+        Index(
+            "uq_live_single_running",
+            "desired_state",
+            unique=True,
+            postgresql_where="desired_state = 'running' AND deleted_at IS NULL",
+        ),
+        Index("ix_live_camera_active_created", "is_active", "created_at"),
+    )
+
+
+class LiveCameraRun(Base):
+    __tablename__ = "live_camera_run"
+
+    run_id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_uuid7)
+    camera_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("live_camera.camera_id"), nullable=False
+    )
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    runtime_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    lease_token: Mapped[str | None] = mapped_column(String(64))
+    lease_expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    first_frame_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    last_frame_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    stopped_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    reconnect_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_path: Mapped[str | None] = mapped_column(String(512))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    sanitized_error: Mapped[str | None] = mapped_column(String(512))
+    metrics: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("generation > 0", name="live_camera_run_generation_check"),
+        CheckConstraint("reconnect_count >= 0", name="live_camera_run_reconnect_count_check"),
+        CheckConstraint(
+            "runtime_state IN ('STARTING', 'ACTIVE', 'RECONNECTING', "
+            "'STOPPING', 'STOPPED', 'FAILED')",
+            name="live_camera_run_runtime_state_check",
+        ),
+        UniqueConstraint("camera_id", "generation", name="uq_live_run_camera_generation"),
+        Index("ix_live_camera_run_camera_created", "camera_id", "created_at"),
+        Index("ix_live_camera_run_lease", "runtime_state", "lease_expires_at"),
+    )
+
+
+class LiveDetectionEvent(Base):
+    __tablename__ = "live_detection_event"
+
+    event_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=new_uuid7
+    )
+    camera_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("live_camera.camera_id"), nullable=False
+    )
+    run_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("live_camera_run.run_id"), nullable=False
+    )
+    native_track_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    face_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("face_identity.face_id")
+    )
+    name_snapshot: Mapped[str | None] = mapped_column(String(255))
+    identity_version_snapshot: Mapped[int | None] = mapped_column(Integer)
+    match_score: Mapped[float | None] = mapped_column(Float)
+    nearest_known_score: Mapped[float | None] = mapped_column(Float)
+    detector_confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    first_seen_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_seen_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    occurred_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    bounding_box: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    landmarks: Mapped[list] = mapped_column(JSONB, nullable=False)
+    quality: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    snapshot_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    snapshot_bucket: Mapped[str | None] = mapped_column(String(128))
+    snapshot_object_key: Mapped[str | None] = mapped_column(String(512))
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('known', 'unknown')", name="live_detection_event_event_type_check"
+        ),
+        CheckConstraint(
+            "snapshot_status IN ('pending', 'ready', 'failed', 'unavailable')",
+            name="live_detection_event_snapshot_status_check",
+        ),
+        CheckConstraint(
+            "(event_type = 'known' AND face_id IS NOT NULL AND name_snapshot IS NOT NULL) "
+            "OR (event_type = 'unknown' AND face_id IS NULL AND name_snapshot IS NULL)",
+            name="live_detection_event_identity_check",
+        ),
+        CheckConstraint(
+            "(snapshot_bucket IS NULL) = (snapshot_object_key IS NULL)",
+            name="live_detection_event_snapshot_pair_check",
+        ),
+        UniqueConstraint(
+            "run_id", "native_track_id", "event_type", name="uq_live_event_run_track_type"
+        ),
+        Index("ix_live_event_camera_occurred", "camera_id", "occurred_at", "event_id"),
+        Index("ix_live_event_face_occurred", "face_id", "occurred_at"),
+    )

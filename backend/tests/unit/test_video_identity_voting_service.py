@@ -47,7 +47,14 @@ async def test_two_moderate_votes_resolve_identity():
     matcher = _Matcher(
         {1.0: [FaceMatch(identity, "s1", 0.82)], 2.0: [FaceMatch(identity, "s2", 0.80)]}
     )
-    voter = VideoIdentityVotingService(Settings(), matcher)
+    voter = VideoIdentityVotingService(
+        Settings(
+            recognition_threshold=0.55,
+            video_track_vote_candidate_floor=0.70,
+            video_track_vote_min_margin=0.05,
+        ),
+        matcher,
+    )
 
     decision = await voter.resolve(_track([1.0, 2.0]))
 
@@ -127,7 +134,11 @@ async def test_ambiguous_consensus_is_rejected():
     first = _identity("face-a")
     second = _identity("face-b")
     voter = VideoIdentityVotingService(
-        Settings(),
+        Settings(
+            recognition_threshold=0.55,
+            video_track_vote_candidate_floor=0.70,
+            video_track_vote_min_margin=0.05,
+        ),
         _Matcher(
             {
                 1.0: [FaceMatch(first, "a1", 0.82)],

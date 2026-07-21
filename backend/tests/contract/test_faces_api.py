@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
+from io import BytesIO
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.main import app
 from app.presentation.dependencies import (
@@ -13,7 +15,15 @@ from app.presentation.dependencies import (
 
 FACE_ID = str(uuid4())
 PROCESS_ID = str(uuid4())
-JPEG = b"\xff\xd8payload\xff\xd9"
+
+
+def _jpeg() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (1, 1), color=(127, 127, 127)).save(output, format="JPEG")
+    return output.getvalue()
+
+
+JPEG = _jpeg()
 NOW = datetime.now(UTC).isoformat()
 
 

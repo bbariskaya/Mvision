@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -76,6 +76,34 @@ class Settings(BaseSettings):
     video_preprocess_config_path: str = "/workspace/configs/video_preprocess_arcface.txt"
     video_sgie_config_path: str = "/workspace/configs/video_sgie_arcface_r50.txt"
 
+    live_enabled: bool = False
+    live_uri_encryption_keys: SecretStr | None = None
+    live_uri_fingerprint_key: SecretStr | None = None
+    live_worker_gpu_id: int = 0
+    live_worker_id: str = "live-worker-0"
+    live_worker_poll_seconds: float = 1.0
+    live_worker_lease_seconds: int = 30
+    live_native_executable: str = "/workspace/build/pipeline/mvision_live_worker"
+    live_rtsp_output_host: str = "localhost"
+    live_rtsp_output_port: int = 8554
+    live_rtp_udp_port: int = 5400
+
+    @model_validator(mode="after")
+    def validate_live_secrets(self) -> "Settings":
+        encryption_keys = (
+            self.live_uri_encryption_keys.get_secret_value().strip()
+            if self.live_uri_encryption_keys is not None
+            else ""
+        )
+        fingerprint_key = (
+            self.live_uri_fingerprint_key.get_secret_value().strip()
+            if self.live_uri_fingerprint_key is not None
+            else ""
+        )
+        if self.live_enabled and (not encryption_keys or not fingerprint_key):
+            raise ValueError("LIVE_SECRET_CONFIGURATION_REQUIRED")
+        return self
+
     @property
     def gpu_socket_paths(self) -> list[str]:
         return [path.strip() for path in self.gpu_worker_sockets.split(",") if path.strip()]
@@ -95,6 +123,16 @@ class Settings(BaseSettings):
             for value in self.video_allowed_codecs.split(",")
             if value.strip()
         }
+
+    @property
+    def live_encryption_key_values(self) -> list[str]:
+        if self.live_uri_encryption_keys is None:
+            return []
+        return [
+            value.strip()
+            for value in self.live_uri_encryption_keys.get_secret_value().split(",")
+            if value.strip()
+        ]
 
 
 @lru_cache

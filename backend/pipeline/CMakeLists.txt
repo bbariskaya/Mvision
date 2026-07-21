@@ -11,6 +11,12 @@ set(CMAKE_CUDA_ARCHITECTURES 75)
 find_path(MSGPACK_INCLUDE_DIR msgpack.hpp REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET gstreamer-1.0 gstreamer-app-1.0)
+pkg_check_modules(
+    GSTREAMER_RTSP_SERVER
+    REQUIRED
+    IMPORTED_TARGET
+    gstreamer-rtsp-server-1.0
+)
 find_package(CUDAToolkit REQUIRED)
 find_path(
     DEEPSTREAM_INCLUDE_DIR
@@ -40,6 +46,50 @@ target_include_directories(
 target_compile_options(mvision_protocol PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 enable_testing()
+add_executable(test_live_runtime_contract tests/test_live_runtime_contract.cpp)
+target_link_libraries(
+    test_live_runtime_contract
+    PRIVATE PkgConfig::GSTREAMER PkgConfig::GSTREAMER_RTSP_SERVER
+)
+target_compile_options(
+    test_live_runtime_contract PRIVATE -Wall -Wextra -Wpedantic -Werror
+)
+add_test(NAME live_runtime_contract COMMAND test_live_runtime_contract)
+
+add_library(mvision_live_protocol src/live_protocol.cpp)
+target_include_directories(
+    mvision_live_protocol
+    PUBLIC include
+    PRIVATE ${MSGPACK_INCLUDE_DIR}
+)
+target_compile_options(mvision_live_protocol PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(test_live_protocol tests/test_live_protocol.cpp)
+target_include_directories(test_live_protocol PRIVATE ${MSGPACK_INCLUDE_DIR})
+target_link_libraries(test_live_protocol PRIVATE mvision_live_protocol)
+target_compile_options(test_live_protocol PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME live_protocol COMMAND test_live_protocol)
+
+add_library(mvision_live_track_state src/live_track_state.cpp)
+target_include_directories(mvision_live_track_state PUBLIC include)
+target_compile_options(
+    mvision_live_track_state PRIVATE -Wall -Wextra -Wpedantic -Werror
+)
+
+add_executable(test_live_track_state tests/test_live_track_state.cpp)
+target_link_libraries(test_live_track_state PRIVATE mvision_live_track_state)
+target_compile_options(
+    test_live_track_state PRIVATE -Wall -Wextra -Wpedantic -Werror
+)
+add_test(NAME live_track_state COMMAND test_live_track_state)
+
+add_executable(inspect_live_runtime tools/inspect_live_runtime.cpp)
+target_link_libraries(
+    inspect_live_runtime
+    PRIVATE PkgConfig::GSTREAMER PkgConfig::GSTREAMER_RTSP_SERVER
+)
+target_compile_options(inspect_live_runtime PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
 add_executable(test_protocol tests/test_protocol.cpp)
 target_link_libraries(test_protocol PRIVATE mvision_protocol)
 target_compile_options(test_protocol PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -120,17 +170,21 @@ add_test(
         1
 )
 
-add_executable(benchmark_image_ingress tools/benchmark_image_ingress.cpp)
-target_link_libraries(benchmark_image_ingress PRIVATE mvision_pipeline)
-target_compile_options(benchmark_image_ingress PRIVATE -Wall -Wextra -Wpedantic -Werror)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/benchmark_image_ingress.cpp")
+    add_executable(benchmark_image_ingress tools/benchmark_image_ingress.cpp)
+    target_link_libraries(benchmark_image_ingress PRIVATE mvision_pipeline)
+    target_compile_options(benchmark_image_ingress PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
 
 add_executable(mvision_worker src/worker_main.cpp)
 target_link_libraries(mvision_worker PRIVATE mvision_pipeline mvision_protocol)
 target_compile_options(mvision_worker PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
-add_executable(inspect_detector_pipeline tools/inspect_detector_pipeline.cpp)
-target_link_libraries(inspect_detector_pipeline PRIVATE mvision_pipeline)
-target_compile_options(inspect_detector_pipeline PRIVATE -Wall -Wextra -Wpedantic -Werror)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/inspect_detector_pipeline.cpp")
+    add_executable(inspect_detector_pipeline tools/inspect_detector_pipeline.cpp)
+    target_link_libraries(inspect_detector_pipeline PRIVATE mvision_pipeline)
+    target_compile_options(inspect_detector_pipeline PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
 
 add_library(mvision_yolo_postprocess src/yolo_postprocess.cu)
 set_target_properties(mvision_yolo_postprocess PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -189,11 +243,13 @@ target_compile_options(
 )
 add_test(NAME yolo_face_parser COMMAND test_yolo_face_parser)
 
-add_executable(benchmark_yolo_postprocess tools/benchmark_yolo_postprocess.cu)
-target_link_libraries(
-    benchmark_yolo_postprocess
-    PRIVATE mvision_yolo_postprocess CUDA::cudart
-)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/benchmark_yolo_postprocess.cu")
+    add_executable(benchmark_yolo_postprocess tools/benchmark_yolo_postprocess.cu)
+    target_link_libraries(
+        benchmark_yolo_postprocess
+        PRIVATE mvision_yolo_postprocess CUDA::cudart
+    )
+endif()
 
 add_library(mvision_face_alignment src/face_align_kernel.cu)
 set_target_properties(mvision_face_alignment PROPERTIES POSITION_INDEPENDENT_CODE ON)

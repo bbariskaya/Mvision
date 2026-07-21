@@ -5,6 +5,9 @@ from app.config import Settings, get_settings
 from app.infrastructure.database.repositories import (
     FaceIdentityRepository,
     FaceSampleRepository,
+    LiveCameraRepository,
+    LiveEventRepository,
+    LiveRunRepository,
     ProcessEventRepository,
     ProcessRecordRepository,
     RecognitionResultRepository,
@@ -12,6 +15,7 @@ from app.infrastructure.database.repositories import (
     VideoTrackRepository,
 )
 from app.infrastructure.gpu.worker_pool import GpuWorkerPool
+from app.infrastructure.live.uri_cipher import LiveUriCipher
 from app.infrastructure.object_storage.minio_adapter import MinIOAdapter
 from app.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
 from app.infrastructure.video.native_runner import NativeVideoRunner
@@ -19,13 +23,14 @@ from app.services.enrollment_service import EnrollmentService
 from app.services.face_matcher import FaceMatcher
 from app.services.face_sample_persistence_service import FaceSamplePersistenceService
 from app.services.identity_service import IdentityService
+from app.services.live_camera_service import LiveCameraService
 from app.services.process_query_service import ProcessQueryService
 from app.services.recognition_service import RecognitionService
+from app.services.video_identity_voting_service import VideoIdentityVotingService
 from app.services.video_job_service import VideoJobService
 from app.services.video_processor import VideoJobProcessor
 from app.services.video_result_service import VideoResultService
 from app.services.video_tracking_service import VideoTrackingService
-from app.services.video_identity_voting_service import VideoIdentityVotingService
 from app.services.video_upload_service import VideoUploadService
 
 
@@ -42,6 +47,7 @@ class ServiceContainer:
     video_jobs: VideoJobService
     video_results: VideoResultService
     video_processor: VideoJobProcessor
+    live_cameras: LiveCameraService
 
 
 @lru_cache
@@ -54,6 +60,9 @@ def get_container() -> ServiceContainer:
     event_repo = ProcessEventRepository()
     video_job_repo = VideoJobRepository()
     video_track_repo = VideoTrackRepository()
+    live_camera_repo = LiveCameraRepository()
+    live_run_repo = LiveRunRepository()
+    live_event_repo = LiveEventRepository()
     minio = MinIOAdapter(settings)
     qdrant = QdrantAdapter(settings)
     workers = GpuWorkerPool(settings.gpu_socket_paths, settings.gpu_worker_timeout_seconds)
@@ -109,6 +118,20 @@ def get_container() -> ServiceContainer:
         NativeVideoRunner(settings),
         video_results.finalize,
     )
+    live_cipher = None
+    if settings.live_encryption_key_values and settings.live_uri_fingerprint_key is not None:
+        live_cipher = LiveUriCipher(
+            settings.live_encryption_key_values,
+            settings.live_uri_fingerprint_key.get_secret_value(),
+        )
+    live_cameras = LiveCameraService(
+        live_camera_repo,
+        live_run_repo,
+        live_event_repo,
+        live_cipher,
+        output_host=settings.live_rtsp_output_host,
+        output_port=settings.live_rtsp_output_port,
+    )
     return ServiceContainer(
         settings,
         minio,
@@ -121,6 +144,7 @@ def get_container() -> ServiceContainer:
         video_jobs,
         video_results,
         video_processor,
+        live_cameras,
     )
 
 
@@ -146,3 +170,7 @@ def get_video_upload_service() -> VideoUploadService:
 
 def get_video_job_service() -> VideoJobService:
     return get_container().video_jobs
+
+
+def get_live_camera_service() -> LiveCameraService:
+    return get_container().live_cameras
