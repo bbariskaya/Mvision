@@ -137,6 +137,32 @@ add_executable(mvision_video_worker src/video_worker_main.cpp)
 target_link_libraries(mvision_video_worker PRIVATE mvision_video_pipeline)
 target_compile_options(mvision_video_worker PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
+add_library(mvision_live_pipeline src/live_pipeline.cpp)
+target_include_directories(
+    mvision_live_pipeline
+    PUBLIC include
+    PRIVATE ${DEEPSTREAM_INCLUDE_DIR}
+)
+target_link_libraries(
+    mvision_live_pipeline
+    PUBLIC
+        mvision_live_protocol
+        mvision_live_track_state
+        mvision_video_pipeline
+        PkgConfig::GSTREAMER
+        CUDA::cudart
+        ${NVDS_GST_META_LIBRARY}
+        ${NVDS_META_LIBRARY}
+)
+target_compile_options(
+    mvision_live_pipeline
+    PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers
+)
+
+add_executable(smoke_live_pipeline tools/smoke_live_pipeline.cpp)
+target_link_libraries(smoke_live_pipeline PRIVATE mvision_live_pipeline)
+target_compile_options(smoke_live_pipeline PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
 add_library(mvision_pipeline src/image_source_pool.cpp)
 target_include_directories(mvision_pipeline PUBLIC include PRIVATE ${DEEPSTREAM_INCLUDE_DIR})
 target_link_libraries(

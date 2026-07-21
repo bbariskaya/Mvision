@@ -7,9 +7,9 @@ hareketinin livestream oldugunu acikca belirledi. Bu sprint Phase 3 canli akis
 calismasini yetkilendirir. Phase 1 ve Phase 2 belgelerindeki RTSP non-goal
 ifadeleri yalniz kendi tamamlanmis fazlarinin siniridir; bu sprinti engellemez.
 
-Packet 0 belgeleri, Packet 1 compatibility/control-plane contracts ve Packet 2
-protocol/native track state tamamlanmistir. Native RTSP ingest, reconnect,
-inference/output pipeline, supervisor ve required self-hosted
+Packet 0 belgeleri, Packet 1 compatibility/control-plane contracts, Packet 2
+protocol/native track state ve Packet 3 Task 7 RTSP ingest/inference zinciri
+tamamlanmistir. Reconnect, output pipeline, supervisor ve required self-hosted
 OpenTelemetry/Prometheus/Loki/Tempo/Grafana source'u henuz yazilmamistir.
 
 ## Objective
@@ -158,8 +158,8 @@ the relevant gates.
   implementations, official DeepStream/GStreamer documentation.
 - `RUNTIME_VERIFIED`: installed NVIDIA runtime and completed image/video GPU
   paths recorded by prior packets.
-- `NOT_PROVEN`: live RTSP ingest, reconnect, live SGIE metadata coverage,
-  annotated RTSP output, live snapshots, 24-hour soak and multi-camera scale.
+- `NOT_PROVEN`: live reconnect, annotated RTSP output, live snapshots, 24-hour
+  soak and multi-camera scale.
 - `RELEASE_BLOCKED_LEGAL_REVIEW`: model/weight provenance, NVIDIA EULA release
   obligations and object-storage distribution choice.
 
@@ -199,8 +199,29 @@ the relevant gates.
 - Packet-wide Python unit/contract suite: `129 passed`; isolated persistence/API
   integration suite: `44 passed`.
 - Existing native protocol/video aggregation binaries: `PASS`.
-- Native RTSP ingest, reconnect, live SGIE coverage, annotated RTSP output,
-  snapshots and soak: `NOT_PROVEN`.
+- Packet 3 Task 7 native RTSP ingest and live SGIE metadata coverage: `PASS`.
+  The real GPU smoke used `nvurisrcbin`, NVDEC/NVMM, the existing
+  YOLOv8-Face/NvDCF/GPU alignment/ArcFace chain and a 120-frame Friends window.
+- Task 7 baseline raw summary: `120` decoded frames, `357` tracked/eligible
+  objects, `357` normalized embeddings, `0` missing/invalid embeddings,
+  norm min/max/mean `0.999999/1/1`, consecutive cosine mean `0.0817879` over
+  `356` pairs, `0` measured tracker ID switches, `0` bus warnings/errors and
+  exactly `2` sampled `inference_window` operation records.
+- Task 7 one-variable A/B raw summaries:
+
+  | Candidate | Coverage | Norm min/max/mean | Consecutive cosine mean / pairs | ID switches | Pipeline warnings/errors |
+  |---|---:|---:|---:|---:|---:|
+  | existing video configs | `357/357` | `0.999999/1/1` | `0.0817879 / 356` | `0` | `0/0` |
+  | SGIE `network-type=100` | `357/357` | `0.999999/1/1` | `0.0817879 / 356` | `0` | `0/0` |
+  | remove `operate-on-gie-id` | `357/357` | `0.999999/1/1` | `0.0817879 / 356` | `0` | `0/0` |
+  | `secondary-reinfer-interval=1` | `357/357` | `0.999999/1/1` | `0.0817879 / 356` | `0` | `0/0` |
+  | NvDCF `visualTrackerType=0` | `357/357` | `0.999999/1/1` | `0.0817879 / 356` | `0` | `2 tracker warnings / 0` |
+
+  Common optional plugin-scanner warnings are runtime-image inventory noise and
+  were unchanged. No candidate improved the baseline, so no `live_*` config was
+  created; the existing video configs remain the live contract.
+- Native RTSP reconnect, annotated RTSP output, snapshots and soak:
+  `NOT_PROVEN`.
 - OpenTelemetry trace continuity, telemetry privacy/cardinality, Collector,
   Prometheus, Loki, Tempo, Grafana dashboards/correlations, retention,
   fault-isolation and overhead A/B: `DESIGN_APPROVED`, implementation

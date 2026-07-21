@@ -903,7 +903,7 @@ cmake --build build/pipeline --target smoke_live_pipeline
 
 Expected: target-not-found failure.
 
-- [ ] **Step 4: Build the single-camera graph**
+- [x] **Step 4: Build the single-camera graph**
 
 Construct and check every factory/link result for:
 
@@ -917,7 +917,7 @@ Use `batch-size=1`, `live-source=1`, configured dimensions and GPU ID. Preserve
 the current parser, engine, landmark mapping and ArcFace preprocess contract.
 Never construct source with `cv2.VideoCapture`, FFmpeg CLI or CPU decode.
 
-- [ ] **Step 5: Prove SGIE config parity before copying configs**
+- [x] **Step 5: Prove SGIE config parity before copying configs**
 
 Run current video config and each candidate change separately. Record:
 
@@ -936,13 +936,13 @@ cosine parity beyond tolerance. Specifically test `network-type`,
 `operate-on-gie-id`, `secondary-reinfer-interval` and NvDCF visual mode one at
 a time.
 
-- [ ] **Step 6: Run real GPU smoke**
+- [x] **Step 6: Run real GPU smoke**
 
 Run the fixture and native smoke in the DeepStream image. Expected: ACTIVE,
 finite normalized embeddings, original-coordinate bbox/landmarks and exit `0`
 after a bounded stop.
 
-- [ ] **Step 7: Regression gate**
+- [x] **Step 7: Regression gate**
 
 Run existing native tests:
 
@@ -955,7 +955,7 @@ LD_LIBRARY_PATH=build/pipeline ./build/pipeline/test_yolo_face_parser
 
 Expected: all pass unchanged.
 
-- [ ] **Step 8: Scope checkpoint**
+- [x] **Step 8: Scope checkpoint**
 
 Record A/B raw summaries in the sprint evidence. Do not publish NVIDIA
 performance comparisons without checking applicable NVIDIA license terms.
