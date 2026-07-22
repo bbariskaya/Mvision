@@ -1,6 +1,6 @@
 # MediaMTX Recording Feedback-Loop Design
 
-**Status:** Approved future-phase design; observability prerequisite not started  
+**Status:** Superseded by `2026-07-22-mediamtx-recording-realtime-appearance-design.md`  
 **Date:** 2026-07-22  
 **Scope:** Record a provider RTSP feed inside Mvision and align detection JSON with exact recorded frames.
 
