@@ -42,7 +42,13 @@ class LiveCameraRepository:
         return list((await session.execute(stmt)).scalars().all())
 
     async def set_desired(
-        self, session: AsyncSession, camera_id: str, desired_state: str
+        self,
+        session: AsyncSession,
+        camera_id: str,
+        desired_state: str,
+        *,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
     ) -> LiveCamera | None:
         if desired_state not in {"stopped", "running"}:
             raise ValueError("INVALID_LIVE_DESIRED_STATE")
@@ -50,6 +56,8 @@ class LiveCameraRepository:
         if camera is None:
             return None
         camera.desired_state = desired_state
+        camera.desired_traceparent = traceparent if desired_state == "running" else None
+        camera.desired_tracestate = tracestate if desired_state == "running" else None
         await session.flush()
         return camera
 
@@ -60,6 +68,8 @@ class LiveCameraRepository:
         if camera is None:
             return None
         camera.desired_state = "stopped"
+        camera.desired_traceparent = None
+        camera.desired_tracestate = None
         camera.is_active = False
         camera.deleted_at = deleted_at
         await session.flush()

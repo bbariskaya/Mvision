@@ -1,6 +1,7 @@
 import asyncio
 import math
 
+from opentelemetry.trace import Status, StatusCode
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     Distance,
@@ -17,6 +18,7 @@ from qdrant_client.models import (
 
 from app.config import Settings
 from app.infrastructure.vector_store.exceptions import VectorStoreError, VectorValidationError
+from app.observability.telemetry import TelemetryRuntime
 
 ALLOWED_PAYLOAD_KEYS = {
     "sample_id",
@@ -30,7 +32,9 @@ L2_TOLERANCE = 1e-5
 
 
 class QdrantAdapter:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self, settings: Settings, telemetry: TelemetryRuntime | None = None
+    ):
         api_key = settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None
         self._client = AsyncQdrantClient(url=settings.qdrant_url, api_key=api_key)
         self._collection = settings.qdrant_collection
@@ -39,6 +43,7 @@ class QdrantAdapter:
         self._distance = Distance[distance_label]
         self._setup_lock = asyncio.Lock()
         self._setup_complete = False
+        self._telemetry = telemetry or TelemetryRuntime(enabled=False)
 
     def _validate_payload(self, payload: dict) -> None:
         extra = set(payload.keys()) - ALLOWED_PAYLOAD_KEYS
@@ -228,6 +233,30 @@ class QdrantAdapter:
         ]
 
     async def search_batch(
+        self,
+        vectors: list[list[float]],
+        top_k: int = 5,
+        filter_active: bool = True,
+        embedding_model_version: str | None = None,
+        preprocess_version: str | None = None,
+    ) -> list[list[dict]]:
+        with self._telemetry.start_span(
+            "live.qdrant.search", {"dependency": "qdrant"}
+        ) as span:
+            try:
+                return await self._search_batch(
+                    vectors,
+                    top_k,
+                    filter_active,
+                    embedding_model_version,
+                    preprocess_version,
+                )
+            except Exception:
+                span.set_attribute("error_code", "QDRANT_SEARCH_FAILED")
+                span.set_status(Status(StatusCode.ERROR, "QDRANT_SEARCH_FAILED"))
+                raise
+
+    async def _search_batch(
         self,
         vectors: list[list[float]],
         top_k: int = 5,

@@ -177,7 +177,10 @@ class NativeLiveRunner:
         while line := await stderr.readline():
             text = redact_live_text(line.decode("utf-8", errors="replace").rstrip())
             if text:
-                logger.warning("Native live worker: %s", text)
+                logger.warning(
+                    "Native live worker diagnostic",
+                    extra={"error_code": "NATIVE_STDERR"},
+                )
 
     @staticmethod
     async def _terminate(process: asyncio.subprocess.Process) -> None:

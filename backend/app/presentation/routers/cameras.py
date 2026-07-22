@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from app.presentation.controllers import cameras as controller
 from app.presentation.dependencies import get_live_camera_service
@@ -43,9 +43,13 @@ async def get_camera(
 @router.post("/{camera_id}/start", response_model=CameraResponse)
 async def start_camera(
     camera_id: str,
+    request: Request,
     service: Annotated[LiveCameraService, Depends(get_live_camera_service)],
 ) -> dict:
-    return await controller.start_camera(camera_id, service)
+    traceparent, tracestate = request.app.state.telemetry.trace_headers()
+    return await controller.start_camera(
+        camera_id, service, traceparent=traceparent, tracestate=tracestate
+    )
 
 
 @router.post("/{camera_id}/stop", response_model=CameraResponse)

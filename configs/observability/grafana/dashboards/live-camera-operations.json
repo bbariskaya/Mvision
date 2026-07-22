@@ -1,0 +1,175 @@
+{
+  "uid": "mvision-live-operations",
+  "title": "Live Camera Operations",
+  "schemaVersion": 41,
+  "version": 3,
+  "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Worker Up",
+      "description": "1 means the live worker process and metrics endpoint are healthy.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "max(mvision_live_worker_up{job=\"mvision-live-worker\"})", "instant": true}],
+      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 5}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Runtime State",
+      "description": "Current native runtime state. Exactly one state should be active.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "mvision_live_runtime_state{job=\"mvision-live-worker\"} == 1", "legendFormat": "{{state}}", "instant": true}],
+      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"1": {"text": "ACTIVE", "color": "green"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "textMode": "name", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "gridPos": {"x": 4, "y": 0, "w": 5, "h": 5}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Current FPS",
+      "description": "Decoded frame throughput over the last minute.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum(rate(mvision_live_frames_total{job=\"mvision-live-worker\"}[1m]))", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "fps", "decimals": 1, "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "yellow", "value": 10}, {"color": "green", "value": 20}]}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "gridPos": {"x": 9, "y": 0, "w": 5, "h": 5}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Face Load / 100 Frames",
+      "description": "Tracked face observations per 100 decoded frames over five minutes.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "100 * sum(rate(mvision_live_tracked_objects_total{job=\"mvision-live-worker\"}[5m])) / clamp_min(sum(rate(mvision_live_frames_total{job=\"mvision-live-worker\"}[5m])), 0.001)", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 1, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 150}, {"color": "red", "value": 300}]}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "gridPos": {"x": 14, "y": 0, "w": 5, "h": 5}
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Embedding Coverage",
+      "description": "Share of embedding-eligible observations that produced an embedding.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "100 * sum(rate(mvision_live_embeddings_total{job=\"mvision-live-worker\"}[5m])) / clamp_min(sum(rate(mvision_live_eligible_objects_total{job=\"mvision-live-worker\"}[5m])), 0.001)", "instant": true}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 1, "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "red"}, {"color": "yellow", "value": 90}, {"color": "green", "value": 98}]}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "gridPos": {"x": 19, "y": 0, "w": 5, "h": 5}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Pipeline Throughput",
+      "description": "Decoded frames and recognition workload through the native pipeline.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(mvision_live_frames_total{job=\"mvision-live-worker\"}[1m]))", "legendFormat": "decoded frames/s"},
+        {"refId": "B", "expr": "sum(rate(mvision_live_tracked_objects_total{job=\"mvision-live-worker\"}[5m]))", "legendFormat": "tracked/s"},
+        {"refId": "C", "expr": "sum(rate(mvision_live_eligible_objects_total{job=\"mvision-live-worker\"}[5m]))", "legendFormat": "eligible/s"},
+        {"refId": "D", "expr": "sum(rate(mvision_live_embeddings_total{job=\"mvision-live-worker\"}[5m]))", "legendFormat": "embeddings/s"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Recognition Yield",
+      "description": "Eligibility, embedding, and temporal cosine-sample yield.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "100 * sum(rate(mvision_live_eligible_objects_total{job=\"mvision-live-worker\"}[5m])) / clamp_min(sum(rate(mvision_live_tracked_objects_total{job=\"mvision-live-worker\"}[5m])), 0.001)", "legendFormat": "eligible / tracked"},
+        {"refId": "B", "expr": "100 * sum(rate(mvision_live_embeddings_total{job=\"mvision-live-worker\"}[5m])) / clamp_min(sum(rate(mvision_live_eligible_objects_total{job=\"mvision-live-worker\"}[5m])), 0.001)", "legendFormat": "embedded / eligible"},
+        {"refId": "C", "expr": "100 * sum(rate(mvision_live_embedding_cosine_samples_total{job=\"mvision-live-worker\"}[5m])) / clamp_min(sum(rate(mvision_live_embeddings_total{job=\"mvision-live-worker\"}[5m])), 0.001)", "legendFormat": "cosine samples / embeddings"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8}
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Missing Embeddings",
+      "description": "Rate and percentage of eligible observations without an embedding.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(mvision_live_missing_embeddings_total{job=\"mvision-live-worker\"}[5m]))", "legendFormat": "missing/s"},
+        {"refId": "B", "expr": "100 * sum(rate(mvision_live_missing_embeddings_total{job=\"mvision-live-worker\"}[5m])) / clamp_min(sum(rate(mvision_live_eligible_objects_total{job=\"mvision-live-worker\"}[5m])), 0.001)", "legendFormat": "missing %"}
+      ],
+      "fieldConfig": {"defaults": {"min": 0}, "overrides": [{"matcher": {"id": "byName", "options": "missing %"}, "properties": [{"id": "unit", "value": "percent"}, {"id": "custom.axisPlacement", "value": "right"}]}]},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "gridPos": {"x": 0, "y": 13, "w": 8, "h": 8}
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Native Operation p95",
+      "description": "95th percentile native lifecycle operation latency by operation.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(mvision_native_operation_duration_seconds_bucket{job=\"mvision-live-worker\"}[5m])))", "legendFormat": "{{operation}}"}],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "gridPos": {"x": 8, "y": 13, "w": 16, "h": 8}
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Reconnects (5m)",
+      "description": "Reconnect attempts in the last five minutes. Zero is healthy.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "increase(mvision_live_reconnects_total{job=\"mvision-live-worker\"}[5m])", "instant": true}],
+      "fieldConfig": {"defaults": {"decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "gridPos": {"x": 0, "y": 21, "w": 8, "h": 5}
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Protocol Drops (5m)",
+      "description": "Dropped protocol records in the last five minutes. Zero is healthy.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum(increase(mvision_live_protocol_dropped_total{job=\"mvision-live-worker\"}[5m]))", "instant": true}],
+      "fieldConfig": {"defaults": {"decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "gridPos": {"x": 8, "y": 21, "w": 8, "h": 5}
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Telemetry Failures (5m)",
+      "description": "Exporter failures in the last five minutes. Media processing remains fail-open.",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum(increase(mvision_telemetry_export_failures_total[5m]))", "instant": true}],
+      "fieldConfig": {"defaults": {"decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green"}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "gridPos": {"x": 16, "y": 21, "w": 8, "h": 5}
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "Recent Error Traces",
+      "description": "Privacy-safe API and live-worker error traces. Select a TraceID to investigate it in Tempo.",
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "targets": [{"refId": "A", "queryType": "traceql", "query": "{ resource.service.name =~ \"mvision-(api|live-worker)\" && status = error }", "limit": 50, "tableType": "traces"}],
+      "options": {"showHeader": true, "cellHeight": "sm"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"x": 0, "y": 26, "w": 12, "h": 9}
+    },
+    {
+      "id": 14,
+      "type": "logs",
+      "title": "Correlated Live Logs",
+      "description": "Safe API and worker logs carrying trace context. Select TraceID to open Tempo.",
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "expr": "{service_name=~\"mvision-(api|live-worker)\"} | trace_id != ``", "queryType": "range", "direction": "backward", "editorMode": "code"}],
+      "options": {"showTime": true, "showLabels": false, "showCommonLabels": false, "wrapLogMessage": true, "prettifyLogMessage": false, "enableLogDetails": true, "sortOrder": "Descending"},
+      "gridPos": {"x": 12, "y": 26, "w": 12, "h": 9}
+    }
+  ]
+}

@@ -9,6 +9,7 @@ from app.services.live_camera_service import LiveCameraService
 
 CAMERA_ID = "019b0000-0000-7000-8000-000000000001"
 RUN_ID = "019b0000-0000-7000-8000-000000000002"
+TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 NOW = datetime.now(UTC)
 
 
@@ -73,10 +74,19 @@ class _Cameras:
     async def list_active(self, session):
         return [self.camera] if self.camera.is_active else []
 
-    async def set_desired(self, session, camera_id, desired_state):
+    async def set_desired(
+        self,
+        session,
+        camera_id,
+        desired_state,
+        traceparent=None,
+        tracestate=None,
+    ):
         camera = await self.get(session, camera_id)
         if camera is not None:
             camera.desired_state = desired_state
+            camera.desired_traceparent = traceparent if desired_state == "running" else None
+            camera.desired_tracestate = tracestate if desired_state == "running" else None
         return camera
 
     async def soft_delete(self, session, camera_id, deleted_at):
@@ -159,6 +169,22 @@ async def test_start_changes_only_durable_desired_state() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_persists_trace_context_and_stop_clears_it() -> None:
+    cameras = _Cameras()
+    service, _ = _service(cameras=cameras)
+
+    await service.start(CAMERA_ID, TRACEPARENT, "vendor=value")
+
+    assert cameras.camera.desired_traceparent == TRACEPARENT
+    assert cameras.camera.desired_tracestate == "vendor=value"
+
+    await service.stop(CAMERA_ID)
+
+    assert cameras.camera.desired_traceparent is None
+    assert cameras.camera.desired_tracestate is None
+
+
+@pytest.mark.asyncio
 async def test_stop_is_idempotent() -> None:
     cameras = _Cameras()
     cameras.camera.desired_state = "stopped"
@@ -194,7 +220,7 @@ class _ConstraintError(Exception):
 
 
 class _ConflictingCameras(_Cameras):
-    async def set_desired(self, session, camera_id, desired_state):
+    async def set_desired(self, session, camera_id, desired_state, **kwargs):
         raise IntegrityError("set running", {}, _ConstraintError())
 
 

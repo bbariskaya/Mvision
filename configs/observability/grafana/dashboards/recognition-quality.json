@@ -1,0 +1,29 @@
+{
+  "uid": "mvision-recognition-quality",
+  "title": "Recognition Quality",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Identity Outcomes",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "sum by (outcome) (rate(mvision_live_identity_decisions_total[5m]))"}],
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Missing Embeddings and Quality Rejections",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "rate(mvision_live_missing_embeddings_total[5m])"},
+        {"refId": "B", "expr": "sum by (reason) (rate(mvision_live_quality_rejections_total[5m]))"}
+      ],
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
+    }
+  ]
+}

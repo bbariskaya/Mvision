@@ -38,8 +38,15 @@ class _CameraService:
         assert camera_id == CAMERA_ID
         return _camera()
 
-    async def start(self, camera_id: str) -> dict:
+    async def start(
+        self,
+        camera_id: str,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
+    ) -> dict:
         assert camera_id == CAMERA_ID
+        assert traceparent is not None
+        assert tracestate is None
         return _camera("running", "STOPPED")
 
     async def stop(self, camera_id: str) -> dict:
@@ -78,7 +85,12 @@ class _CameraService:
 
 
 class _ConflictingCameraService(_CameraService):
-    async def start(self, camera_id: str) -> dict:
+    async def start(
+        self,
+        camera_id: str,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
+    ) -> dict:
         raise LiveCameraError(
             "Another camera is already running",
             "LIVE_CAMERA_LIMIT_REACHED",

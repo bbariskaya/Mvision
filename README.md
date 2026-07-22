@@ -8,8 +8,9 @@ camera configuration, durable camera/run/event state, camera API contracts,
 strict duplex protocol, and bounded native track evidence state. Packet 3 Tasks
 7-10 add verified native RTSP ingest and inference, two-layer reconnect,
 bounded native worker transport, fenced Python supervision, and live identity
-epochs with durable events/snapshots. Annotated RTSP output and the required self-hosted
-OpenTelemetry/Grafana stack are not implemented yet.
+epochs with durable events/snapshots. Annotated RTSP output and the self-hosted
+OpenTelemetry/Grafana stack are implemented; long-duration soak and the remaining
+observability fault/overhead gates are still pending.
 
 ## Delivery Status
 
@@ -19,9 +20,38 @@ OpenTelemetry/Grafana stack are not implemented yet.
 | Uploaded-video recognition | Implemented | PostgreSQL jobs, native DeepStream worker, track-level identity voting. |
 | Friends full-video validation | Verified | 6,665 frames processed and annotated output generated. |
 | Single-camera RTSP livestream | Packet 4 identity verified | Runtime/control-plane contracts, framed protocol, bounded queues, `nvurisrcbin` NVDEC/NVMM ingest, YOLOv8-Face/NvDCF/ArcFace inference, reconnect, teardown, secret-safe supervision, logical identity epochs, cooldown, durable events, and strict live snapshots are implemented. Annotated output remains. See `docs/superpowers/plans/2026-07-21-single-camera-livestream.md`. |
-| OpenTelemetry and Grafana observability | Required; design approved | Collector, Prometheus, Loki, Tempo, provisioned Grafana dashboards, correlation, privacy, retention, and fault gates are part of milestone acceptance. |
+| OpenTelemetry and Grafana observability | Platform running; final gates pending | Collector, Prometheus, Loki, Tempo, provisioned dashboards, bounded metrics, error traces, correlated logs, privacy tests, and a real acceptance verifier are implemented. Fault isolation, retention lifecycle proof, overhead A/B, and soak remain. |
 | Dynamic multi-camera runtime | Later Phase 3 packet | Starts after the single-camera milestone is stable. |
 | Cross-camera body ReID | Later Phase 3 packet | Requires separate topology, timestamp, model, and ReID acceptance. |
+
+## Live Observability Check
+
+Grafana binds server loopback on `127.0.0.1:3001`. From an operator machine,
+open a tunnel and browse to `http://localhost:3001`:
+
+```bash
+ssh -N -L 3001:127.0.0.1:3001 user@10.1.60.230
+```
+
+The `Live Camera Operations` dashboard shows worker/runtime health, FPS,
+recognition throughput and yield, compact anomaly stats, recent error traces,
+and trace-correlated logs. To test Tempo and Loki without crashing or stopping
+the media pipeline, run this on the server:
+
+```bash
+TRACE_ID="$(docker exec mvision-live-worker python3 -m app.observability.smoke)"
+GRAFANA_PASSWORD="$(docker exec mvision-grafana-1 printenv GF_SECURITY_ADMIN_PASSWORD)" \
+  PYTHONPATH=backend uv run --directory backend python scripts/verify_live_observability.py \
+  --trace-id "$TRACE_ID" --grafana-url http://127.0.0.1:3001
+```
+
+Run the smoke check while the camera runtime is `ACTIVE`; an intentionally
+stopped or reconnecting camera correctly fails the live-FPS gate. The verifier
+performs bounded polling for Collector tail-sampling and must print
+`PASS` for dashboard, Prometheus, Tempo, and Loki. The synthetic record uses the
+stable `OBSERVABILITY_SMOKE_TEST` code and never injects a media failure. In
+Grafana, selecting its TraceID opens Tempo; `Logs for this span` returns the safe
+Loki record, and the log TraceID links back to the same trace.
 
 ## System At A Glance
 

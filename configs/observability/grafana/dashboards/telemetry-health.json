@@ -1,0 +1,29 @@
+{
+  "uid": "mvision-telemetry-health",
+  "title": "Telemetry Health",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "15s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Export Failures and Drops",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum by (signal) (rate(mvision_telemetry_export_failures_total[5m]))"},
+        {"refId": "B", "expr": "sum by (signal, reason) (rate(mvision_telemetry_dropped_total[5m]))"}
+      ],
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "Application Logs",
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "expr": "{service_name=~\"mvision-.+\"}"}],
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
+    }
+  ]
+}

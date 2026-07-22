@@ -1,0 +1,18 @@
+{
+  "uid": "mvision-dependencies",
+  "title": "Dependency Health",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Dependency p95 Latency",
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, dependency) (rate(mvision_dependency_duration_seconds_bucket[5m])))"}],
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 8}
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+services:
+  api:
+    environment:
+      LIVE_ENABLED: "true"
+      LIVE_URI_ENCRYPTION_KEYS: ${LIVE_URI_ENCRYPTION_KEYS}
+      LIVE_URI_FINGERPRINT_KEY: ${LIVE_URI_FINGERPRINT_KEY}
+      MINIO_BUCKET_LIVE: mergenvision-live
+
+  live-worker-0:
+    image: mvision-gpu-worker:local
+    build:
+      context: .
+      dockerfile: backend/pipeline/Dockerfile
+    working_dir: /workspace/backend
+    command: ["python3", "-m", "app.worker.live_worker_main"]
+    environment:
+      PYTHONPATH: /workspace/backend
+      DATABASE_URL: postgresql+psycopg://mergen:mergen@postgres:5432/mergenvision
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: face_samples_arcface_r50_webface_v1
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_FACES: mergenvision-faces
+      MINIO_BUCKET_VIDEOS: mergenvision-videos
+      MINIO_BUCKET_LIVE: mergenvision-live
+      LIVE_ENABLED: "true"
+      LIVE_URI_ENCRYPTION_KEYS: ${LIVE_URI_ENCRYPTION_KEYS}
+      LIVE_URI_FINGERPRINT_KEY: ${LIVE_URI_FINGERPRINT_KEY}
+      LIVE_WORKER_ID: live-worker-0
+      LIVE_WORKER_GPU_ID: "0"
+      LIVE_NATIVE_EXECUTABLE: /workspace/build/pipeline/mvision_live_worker
+      LIVE_METRICS_HOST: 0.0.0.0
+      LIVE_METRICS_PORT: "9464"
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    volumes:
+      - ./backend/app:/workspace/backend/app:ro
+      - ./backend/models:/workspace/backend/models:ro
+      - ./configs:/workspace/configs:ro
+      - worker_sockets:/run/mvision
+    expose: ["9464"]
+    ports: ["8554:8554"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    restart: unless-stopped

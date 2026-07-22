@@ -6,6 +6,9 @@ from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 from app.config import Settings
 from app.infrastructure.database.ids import new_uuid7
 from app.infrastructure.database.models import LiveCameraRun
@@ -20,6 +23,7 @@ from app.infrastructure.live.protocol import (
     FailedEvent,
     LiveMessage,
     MetricsEvent,
+    NativeOperationEvent,
     ProtocolHeader,
     StartCommand,
     StateEvent,
@@ -28,6 +32,9 @@ from app.infrastructure.live.protocol import (
     TrackExpiredEvent,
 )
 from app.infrastructure.live.uri_cipher import LiveUriCipher, redact_live_text
+from app.observability.metrics import MvisionMetrics
+from app.observability.semantic import native_span_name
+from app.observability.telemetry import TelemetryRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +58,8 @@ class LiveSupervisor:
         *,
         identity_service: Any | None = None,
         event_service: Any | None = None,
+        telemetry: TelemetryRuntime | None = None,
+        metrics: MvisionMetrics | None = None,
         session_factory: SessionFactory = AsyncSessionLocal,
         monitor_interval_seconds: float | None = None,
     ):
@@ -61,6 +70,8 @@ class LiveSupervisor:
         self._runner = runner
         self._identity_service = identity_service
         self._event_service = event_service
+        self._telemetry = telemetry or TelemetryRuntime(enabled=False)
+        self._metrics = metrics
         self._session_factory = session_factory
         self._monitor_interval = monitor_interval_seconds or max(
             1.0, settings.live_worker_lease_seconds / 3
@@ -68,8 +79,10 @@ class LiveSupervisor:
         self._active_commands: LiveCommandQueue | None = None
         self._active_header: ProtocolHeader | None = None
         self._command_sequence = 2
+        self._metric_counters: dict[tuple[str, str], int] = {}
 
     async def process_one_camera(self, worker_id: str) -> bool:
+        claim_started_ns = time.time_ns()
         lease_token = new_uuid7()
         now = datetime.now(UTC)
         async with self._session_factory() as session:
@@ -102,6 +115,30 @@ class LiveSupervisor:
         monitor_task: asyncio.Task | None = None
         identity_task: asyncio.Task | None = None
         identity_queue: asyncio.Queue[TrackEvidenceEvent | TrackExpiredEvent] | None = None
+        parent_context = self._telemetry.context_from_headers(run.traceparent, run.tracestate)
+        with self._telemetry.start_span(
+            "live.supervisor.claim",
+            {
+                "camera_id": run.camera_id,
+                "run_id": run.run_id,
+                "generation": run.generation,
+            },
+            context=parent_context,
+            start_time=claim_started_ns,
+        ) as claim_span:
+            run_context = trace.set_span_in_context(claim_span)
+        run_scope = self._telemetry.start_span(
+            "live.camera.run",
+            {
+                "camera_id": run.camera_id,
+                "run_id": run.run_id,
+                "generation": run.generation,
+            },
+            context=run_context,
+        )
+        run_span = run_scope.__enter__()
+        anchor_wall_ns = time.time_ns()
+        anchor_monotonic_ns = time.monotonic_ns()
         try:
             plaintext_uri = self._cipher.decrypt(camera.uri_ciphertext).get_secret_value()
             start = self._start_command(run, plaintext_uri)
@@ -126,6 +163,10 @@ class LiveSupervisor:
                     await self._persist_state(run, worker_id, lease_token, event)
                 elif isinstance(event, MetricsEvent):
                     await self._persist_metrics(run, worker_id, lease_token, event)
+                elif isinstance(event, NativeOperationEvent):
+                    self._record_native_operation(
+                        event, anchor_wall_ns, anchor_monotonic_ns
+                    )
                 elif isinstance(event, (TrackEvidenceEvent, TrackExpiredEvent)):
                     if identity_queue is not None:
                         try:
@@ -170,12 +211,14 @@ class LiveSupervisor:
             lease_lost = True
             return True
         except Exception as exc:
+            error_code = (
+                exc.error_code
+                if isinstance(exc, NativeLiveRunnerError)
+                else "LIVE_PIPELINE_ERROR"
+            )
+            run_span.set_attribute("error_code", error_code)
+            run_span.set_status(Status(StatusCode.ERROR, error_code))
             if not lease_lost:
-                error_code = (
-                    exc.error_code
-                    if isinstance(exc, NativeLiveRunnerError)
-                    else "LIVE_PIPELINE_ERROR"
-                )
                 await self._finish(
                     run, worker_id, lease_token, "FAILED", error_code, str(exc)
                 )
@@ -196,6 +239,37 @@ class LiveSupervisor:
             self._active_header = None
             plaintext_uri = None
             start = None
+            run_scope.__exit__(None, None, None)
+
+    def _record_native_operation(
+        self,
+        event: NativeOperationEvent,
+        anchor_wall_ns: int,
+        anchor_monotonic_ns: int,
+    ) -> None:
+        started_ns = anchor_wall_ns + event.started_monotonic_ns - anchor_monotonic_ns
+        ended_ns = anchor_wall_ns + event.ended_monotonic_ns - anchor_monotonic_ns
+        if started_ns <= 0 or abs(event.started_monotonic_ns - anchor_monotonic_ns) > 86_400e9:
+            logger.warning("Native operation timestamp outside run boundary; event dropped")
+            return
+        self._telemetry.record_span(
+            native_span_name(event.operation),
+            start_time=started_ns,
+            end_time=ended_ns,
+            attributes={
+                "operation": event.operation,
+                "status": event.status,
+                **event.attributes,
+            },
+            error_code=event.error_code,
+        )
+        if self._metrics is not None:
+            self._metrics.observe(
+                "native_operation_duration_seconds",
+                (event.ended_monotonic_ns - event.started_monotonic_ns) / 1_000_000_000,
+                operation=event.operation,
+                status="success" if event.status == "ok" else "error",
+            )
 
     async def _process_identity_events(
         self,
@@ -228,7 +302,7 @@ class LiveSupervisor:
                 for assignment in assignments:
                     commands.put_nowait(assignment)
             except Exception:
-                logger.exception("Live identity event processing failed")
+                logger.error("Live identity event processing failed")
             finally:
                 queue.task_done()
 
@@ -248,17 +322,25 @@ class LiveSupervisor:
         while True:
             await asyncio.sleep(self._monitor_interval)
             now = datetime.now(UTC)
-            async with self._session_factory() as session:
-                camera = await self._cameras.get(session, run.camera_id)
-                renewed = await self._runs.renew(
-                    session,
-                    run.run_id,
-                    worker_id,
-                    lease_token,
-                    now,
-                    now + timedelta(seconds=self._settings.live_worker_lease_seconds),
-                )
-                await session.commit()
+            with self._telemetry.start_span(
+                "live.supervisor.lease_renew",
+                {
+                    "camera_id": run.camera_id,
+                    "run_id": run.run_id,
+                    "generation": run.generation,
+                },
+            ):
+                async with self._session_factory() as session:
+                    camera = await self._cameras.get(session, run.camera_id)
+                    renewed = await self._runs.renew(
+                        session,
+                        run.run_id,
+                        worker_id,
+                        lease_token,
+                        now,
+                        now + timedelta(seconds=self._settings.live_worker_lease_seconds),
+                    )
+                    await session.commit()
             if not renewed:
                 raise LiveLeaseLostError("LIVE_WORKER_LEASE_LOST")
             if (camera is None or camera.desired_state != "running") and not stop_sent:
@@ -284,6 +366,18 @@ class LiveSupervisor:
             await session.commit()
         if not updated:
             raise LiveLeaseLostError("LIVE_WORKER_LEASE_LOST")
+        if self._metrics is not None:
+            for state in (
+                "ACTIVE",
+                "FAILED",
+                "RECONNECTING",
+                "STARTING",
+                "STOPPED",
+                "STOPPING",
+            ):
+                self._metrics.set(
+                    "runtime_state", 1 if state == event.state else 0, state=state
+                )
 
     async def _persist_metrics(
         self,
@@ -293,6 +387,32 @@ class LiveSupervisor:
         event: MetricsEvent,
     ) -> None:
         metrics = {"counters": event.counters, "gauges": event.gauges}
+        if self._metrics is not None:
+            for source, target in (
+                ("decoded_frames", "frames_total"),
+                ("tracked_objects", "tracked_objects_total"),
+                ("eligible_objects", "eligible_objects_total"),
+                ("embedding_count", "embeddings_total"),
+                ("missing_embeddings", "missing_embeddings_total"),
+                ("embedding_cosine_samples", "embedding_cosine_samples_total"),
+            ):
+                current = event.counters.get(source, 0)
+                key = (run.run_id, source)
+                previous = self._metric_counters.get(key, 0)
+                if current >= previous:
+                    self._metrics.increment(target, current - previous)
+                self._metric_counters[key] = current
+            dropped = event.counters.get("dropped_events", 0)
+            dropped_key = (run.run_id, "dropped_events")
+            previous_dropped = self._metric_counters.get(dropped_key, 0)
+            if dropped >= previous_dropped:
+                self._metrics.increment(
+                    "protocol_dropped_total",
+                    dropped - previous_dropped,
+                    type="track_evidence",
+                )
+            self._metric_counters[dropped_key] = dropped
+            self._metrics.set("frame_age_seconds", 0)
         async with self._session_factory() as session:
             updated = await self._runs.update_metrics(
                 session,
@@ -341,8 +461,8 @@ class LiveSupervisor:
             run.run_id,
             run.generation,
             1,
-            f"00-{secrets.token_hex(16)}-{secrets.token_hex(8)}-01",
-            None,
+            run.traceparent,
+            run.tracestate,
         )
         return StartCommand(
             header,

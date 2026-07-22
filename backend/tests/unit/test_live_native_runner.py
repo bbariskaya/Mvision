@@ -184,7 +184,7 @@ async def test_stderr_is_redacted_and_nonzero_exit_is_sanitized(
     assert raised.value.error_code == "LIVE_PIPELINE_ERROR"
     assert SECRET_URI not in str(raised.value)
     assert SECRET_URI not in caplog.text
-    assert "rtsp://[REDACTED]" in caplog.text
+    assert "Native live worker diagnostic" in caplog.text
 
 
 @pytest.mark.asyncio

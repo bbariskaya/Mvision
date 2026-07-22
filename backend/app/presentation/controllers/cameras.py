@@ -31,8 +31,16 @@ async def get_camera(camera_id: str, service: LiveCameraService) -> dict:
     return await service.get(_uuid(camera_id, "cameraId"))
 
 
-async def start_camera(camera_id: str, service: LiveCameraService) -> dict:
-    return await service.start(_uuid(camera_id, "cameraId"))
+async def start_camera(
+    camera_id: str,
+    service: LiveCameraService,
+    *,
+    traceparent: str | None = None,
+    tracestate: str | None = None,
+) -> dict:
+    return await service.start(
+        _uuid(camera_id, "cameraId"), traceparent=traceparent, tracestate=tracestate
+    )
 
 
 async def stop_camera(camera_id: str, service: LiveCameraService) -> dict:

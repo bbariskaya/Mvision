@@ -1,4 +1,5 @@
 import datetime
+import secrets
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Protocol
 
@@ -11,6 +12,7 @@ from app.infrastructure.database.repositories import (
     LiveRunRepository,
 )
 from app.infrastructure.database.session import AsyncSessionLocal
+from app.infrastructure.live.protocol import validate_trace_context
 from app.infrastructure.live.uri_cipher import LiveUriCipher
 from app.services.exceptions import LiveCameraError
 
@@ -88,10 +90,28 @@ class LiveCameraService:
             run = await self._runs.latest_for_camera(session, camera_id)
             return self._camera_snapshot(camera, run)
 
-    async def start(self, camera_id: str) -> dict[str, Any]:
+    async def start(
+        self,
+        camera_id: str,
+        traceparent: str | None = None,
+        tracestate: str | None = None,
+    ) -> dict[str, Any]:
+        traceparent = traceparent or self._new_traceparent()
+        try:
+            validate_trace_context(traceparent, tracestate)
+        except ValueError as exc:
+            raise LiveCameraError(
+                "Invalid trace context", "INVALID_TRACE_CONTEXT", 422
+            ) from exc
         async with self._session_factory() as session:
             try:
-                camera = await self._cameras.set_desired(session, camera_id, "running")
+                camera = await self._cameras.set_desired(
+                    session,
+                    camera_id,
+                    "running",
+                    traceparent=traceparent,
+                    tracestate=tracestate,
+                )
                 if camera is None:
                     raise LiveCameraError("Camera not found", "CAMERA_NOT_FOUND", 404)
                 await session.commit()
@@ -107,6 +127,10 @@ class LiveCameraService:
                 raise
             run = await self._runs.latest_for_camera(session, camera_id)
             return self._camera_snapshot(camera, run)
+
+    @staticmethod
+    def _new_traceparent() -> str:
+        return f"00-{secrets.token_hex(16)}-{secrets.token_hex(8)}-01"
 
     async def stop(self, camera_id: str) -> dict[str, Any]:
         async with self._session_factory() as session:

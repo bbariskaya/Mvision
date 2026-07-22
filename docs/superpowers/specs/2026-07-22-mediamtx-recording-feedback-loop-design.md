@@ -2,7 +2,7 @@
 
 **Status:** Approved future-phase design; observability prerequisite not started  
 **Date:** 2026-07-22  
-**Scope:** Align live RTSP detection JSON with MediaMTX recordings at frame-level accuracy.
+**Scope:** Record a provider RTSP feed inside Mvision and align detection JSON with exact recorded frames.
 
 ## 0. Phase Order And Prerequisite
 
@@ -25,23 +25,26 @@ manifest delivery, alignment failures, and acceptance evidence.
 
 ## 1. Objective
 
-MediaMTX serves one camera as a live RTSP stream and records the same stream in
-nominal 15-minute segments. Mvision consumes the live RTSP stream and produces
-identity, score, landmark, and bounding-box JSON. A consumer must be able to
-apply that JSON to the corresponding recorded segment and render every result
-on the same source frame, including when Mvision connects late or reconnects.
+The provider serves one camera as a live RTSP stream. Its own recordings are not
+an input to this contract. Mvision ingests the provider stream once, records it
+in nominal 15-minute segments, and runs inference from the same canonical
+ingest. A consumer must be able to apply Mvision's identity, score, landmark,
+and bounding-box JSON to the exact Mvision recording frame, including after an
+inference restart or an upstream reconnect.
 
-The primary acceptance condition is not merely that wall clocks look close. A
-completed recording plus its matching JSON must reproduce the live detections
-within one decoded frame of the source and without bounding-box coordinate
-drift.
+The primary acceptance condition is an exact canonical-frame join, not merely
+that wall clocks look close. A completed recording plus its matching JSON must
+reproduce detections on the identical canonical source frame with no nearest-
+frame guess and no bounding-box coordinate drift.
 
 ## 2. Locked Assumptions
 
-- The team controls the MediaMTX and Mvision deployments.
+- The provider contract contains only a live RTSP URL and source credentials.
+- Provider-side recordings and recording metadata are not required.
+- The team controls the complete Mvision ingest, recording, inference, and
+  segment-inventory deployment.
 - Both hosts can use a healthy NTP service.
-- MediaMTX can expose its Playback API and recording-completion hook.
-- Original recording paths and segment manifests are retained.
+- Mvision retains original recording paths, exact frame indexes, and manifests.
 - Production segments are nominally 15 minutes; test segments may be shorter.
 - MediaMTX records fMP4 unless a separate compatibility requirement selects
   MPEG-TS.
@@ -49,8 +52,8 @@ drift.
   absolute UTC timestamp and cannot be the sole alignment key.
 - A local analyzer frame counter is diagnostic only. It is not assumed to equal
   a frame number produced by an independent recording decoder.
-- If an absolute source-time mapping is unavailable or untrusted, Mvision does
-  not guess a segment or offset.
+- Exact alignment uses Mvision's canonical frame identity. UTC is retained for
+  audit and cross-system diagnosis, not used as a nearest-frame fallback.
 
 ## 3. Time Domains
 
@@ -77,39 +80,42 @@ equivalent RTCP-aware mechanism, but it must prove that the resulting value is
 source UTC. Calling `system_clock::now()` when a decoded frame reaches the
 analyzer is not an acceptable substitute.
 
-## 4. MediaMTX Contract
+## 4. Canonical Ingest And Recorder Contract
 
-The production configuration uses the MediaMTX host clock as the absolute time
-authority for the routed stream. Both MediaMTX and Mvision hosts must be NTP
-synced.
+Mvision opens one upstream RTSP session and splits the parsed H.264 access-unit
+stream before recording and decoding:
 
-```yaml
-pathDefaults:
-  record: yes
-  recordFormat: fmp4
-  recordPartDuration: 1s
-  recordSegmentDuration: 15m
-  recordPath: ./recordings/%path/%Y-%m-%dT%H-%M-%S-%f%z
-  useAbsoluteTimestamp: false
+```text
+provider RTSP
+  -> RTP depay
+  -> H.264 parse
+  -> canonical access-unit identity
+  -> tee
+       -> recording mux/15-minute segment + exact frame sidecar
+       -> decode/DeepStream/inference + detection JSON
 ```
 
-`recordSegmentDuration` is a minimum duration and segment closure can follow a
-keyframe or happen early when a publisher stops. The recorded manifest, not the
-configured nominal duration, is authoritative.
+The recording branch preserves the provider's encoded access units whenever
+codec/container compatibility permits. Re-encoding is allowed only when
+required and must still happen after canonical frame identity is assigned.
 
-The deployment enables:
+Each video access unit receives a stable identity composed of:
 
-- MediaMTX Playback `/list` access for recording timespans;
-- `runOnRecordSegmentComplete` delivery of `MTX_PATH`, `MTX_SEGMENT_PATH`, and
-  `MTX_SEGMENT_DURATION` to the segment inventory service;
-- retention of the original timestamp-bearing recording path;
-- clock-health monitoring on the MediaMTX and Mvision hosts.
+```text
+canonical_frame_id = timing_epoch + extended_source_timestamp + access_unit_ordinal
+```
 
-`useAbsoluteTimestamp=false` is intentional. MediaMTX replaces potentially
-untrusted publisher absolute timestamps with its synchronized host time and
-routes the RTP-to-NTP relation to RTSP readers. If a future camera-time use case
-requires `useAbsoluteTimestamp=true`, camera clock quality becomes an explicit
-deployment gate and requires a separate calibration run.
+The exact binary representation is selected during implementation, but it must
+remain unique across RTP wraparound, duplicate PTS values, reconnects, and
+process restarts. Both branches carry the same identity. The recorder writes an
+exact sidecar entry for every muxed video sample and the inference branch emits
+the identity with every detection.
+
+Mvision controls segment rollover. A nominal 15-minute boundary may move to a
+safe keyframe, and an upstream interruption may close a segment early. The
+recorder's actual sample index and manifest are authoritative. NTP-synchronized
+UTC and RTCP Sender Reports remain required for audit, latency, and operational
+correlation, but exact overlay matching does not depend on wall-clock equality.
 
 ## 5. Segment Manifest
 
@@ -124,14 +130,20 @@ Each completed segment produces an immutable manifest:
   "startUtc": "2026-07-22T14:30:00.000000Z",
   "durationNs": 900033333333,
   "endUtcExclusive": "2026-07-22T14:45:00.033333333Z",
-  "format": "fmp4"
+  "format": "fmp4",
+  "timingEpoch": 7,
+  "firstCanonicalFrameId": "7:88473312001:0",
+  "lastCanonicalFrameId": "7:89823341999:0",
+  "frameIndexPath": "recordings/camera-1/segment.frame-index.jsonl"
 }
 ```
 
-The segment inventory validates that path-derived start time, Playback API
-timespan, hook duration, and probed media duration are mutually consistent
-within a configured frame-sized tolerance. A renamed recording without its
-manifest or original timestamp-bearing path is not considered alignable.
+The segment is publishable only after the video, manifest, and exact frame index
+are durably finalized. The inventory verifies that every indexed sample exists
+in the recording, every canonical frame ID is unique, sample order is monotonic
+within its timing epoch, and probed media duration agrees with the indexed
+sample range. A recording without its manifest and exact frame index is not
+considered alignable.
 
 ## 6. Detection JSON Contract
 
@@ -145,12 +157,13 @@ semantics are fixed.
   "cameraId": "camera-1",
   "runId": "019f...",
   "generation": 3,
+  "timingEpoch": 7,
+  "canonicalFrameId": "7:88474249801:0",
   "sourceTimeUtc": "2026-07-22T14:30:10.420000Z",
   "streamPtsNs": 10420000000,
   "receivedAtUtc": "2026-07-22T14:30:10.511000Z",
   "timeBasis": "rtcp_ntp",
-  "timeUncertaintyNs": 16666667,
-  "alignmentState": "aligned",
+  "alignmentState": "exact_frame",
   "trackId": "42",
   "identityEpoch": 1,
   "identityState": "known",
@@ -173,51 +186,59 @@ semantics are fixed.
 
 Rules:
 
-- `sourceTimeUtc` is the only event time used for segment selection.
+- `canonicalFrameId` is the only key used for exact recording-frame matching.
+- `timingEpoch` changes whenever upstream timing continuity cannot be proven.
+- `sourceTimeUtc` supports audit, cross-system correlation, and human queries.
 - `streamPtsNs` supports ordering and diagnostics but is not global time.
 - `receivedAtUtc - sourceTimeUtc` is ingest latency, not segment offset.
-- `timeBasis` is `rtcp_ntp` for an aligned event; receive-clock fallbacks must
-  use a different value and cannot claim `alignmentState=aligned`.
-- `timeUncertaintyNs` records the known timestamp uncertainty and must not
-  exceed one source-frame duration for strict acceptance.
+- `timeBasis` is `rtcp_ntp` when absolute source time is available. A missing
+  RTCP mapping does not invalidate an otherwise exact canonical-frame join.
+- `alignmentState=exact_frame` is allowed only after the finalized recorder
+  index contains the event's canonical frame ID.
 - Geometry is expressed in original stream pixels and carries source dimensions.
 - Reconnects create a new analyzer generation but do not reset source UTC.
 
-## 7. Matching Algorithm
+## 7. Exact Matching Algorithm
 
-Segments use half-open intervals:
+The finalized frame index is a unique map:
+
+```text
+canonical_frame_id -> segment_id, video_sample_index, sample_pts, sample_dts
+```
+
+The overlay consumer performs an exact key lookup. It decodes the indexed video
+sample and applies all detections carrying that canonical frame ID. It never
+chooses the closest timestamp, calculates a frame number from nominal FPS, or
+uses wall-clock tolerance to hide a missing frame.
+
+Segment ownership is decided by the recorder when the sample is muxed. An event
+at a segment boundary therefore maps to exactly one segment and sample index;
+there is no independently calculated boundary rule in the overlay consumer.
+
+UTC half-open ranges remain in the manifest for API queries and audit:
 
 ```text
 segment.start_utc <= event.source_time_utc < segment.end_utc_exclusive
 ```
 
-For the selected segment:
-
-```text
-segment_offset_ns = event.source_time_utc - segment.start_utc
-```
-
-The overlay consumer seeks using media timestamps and chooses the closest
-decoded frame within the declared uncertainty. It must not calculate a frame
-number as `offset * nominal_fps` for variable-frame-rate content. Events at an
-exact boundary belong to the segment starting at that boundary.
-
-If no segment contains the event, multiple manifests overlap, timestamp
-uncertainty exceeds policy, or clocks fail health checks, the event is marked
-`unaligned` with a machine-readable reason. It is not silently attached to the
-nearest segment.
+They are a consistency check, not the frame join. If the exact index does not
+contain the event's canonical frame ID, the event is marked `unaligned` with a
+machine-readable reason. It is never attached to another frame.
 
 ## 8. Late Join And Reconnect Behavior
 
-- Connecting after a recording has started is valid because the frame carries
-  source UTC independent of analyzer start time.
-- The first event after connection remains pending until a valid RTCP/NTP
-  mapping exists.
-- Reconnect may reset local PTS or tracker state. It must not reset source UTC.
-- A new run/generation preserves fencing and identity semantics while allowing
-  events before and after reconnect to map into one recording segment.
-- RTCP mapping discontinuity, clock step, or excessive drift invalidates
-  alignment until a stable reference is re-established.
+- Starting inference after recording has begun is valid because both branches
+  retain canonical frame identity independent of inference start time.
+- Missing RTCP/NTP mapping can delay absolute UTC publication but does not
+  force an approximate frame match.
+- An inference-only restart does not interrupt the recording branch.
+- An upstream reconnect starts a new timing epoch and closes or fences the
+  affected segment according to recorder policy.
+- A new run/generation preserves fencing and identity semantics. Events on each
+  side of an upstream reconnect resolve through their own timing epoch and
+  recorder segment/index.
+- RTCP mapping discontinuity, clock step, or excessive drift invalidates trusted
+  source UTC until remapping, but cannot change an exact canonical-frame join.
 
 ## 9. Feedback-Loop Acceptance Harness
 
@@ -233,28 +254,30 @@ The source fixture contains:
 
 Test sequence:
 
-1. Start NTP-synchronized MediaMTX with recording, Playback API, and completion
-   hook enabled.
-2. Publish the deterministic fixture before Mvision connects.
-3. Connect Mvision several seconds late and collect schema-v2 JSON.
-4. Force an RTSP disconnect/reconnect inside a segment.
+1. Start a local MediaMTX fixture that represents the provider's RTSP server.
+2. Start Mvision's canonical ingest and recording branch.
+3. Enable inference several seconds after recording starts and collect
+   schema-v2 JSON.
+4. Restart inference without stopping recording, then force an upstream RTSP
+   disconnect/reconnect.
 5. Continue through at least one recording boundary.
 6. Wait for segment-completion manifests.
-7. Resolve every aligned event to a segment and media offset.
-8. Decode the selected recording frame and render the JSON geometry.
+7. Resolve every event through the exact canonical-frame index.
+8. Decode the exact indexed recording sample and render the JSON geometry.
 9. Compare the result with fixture ground truth and burned-in source markers.
 
 Strict acceptance:
 
-- 100% of aligned events select the correct recording segment;
-- selected frame differs from ground truth by at most one decoded source frame;
+- 100% of aligned events select the correct recording segment and sample index;
+- selected canonical frame differs from ground truth by exactly zero frames;
 - no cumulative offset growth over the full test window;
 - bbox intersection-over-union meets the detector fixture threshold;
 - landmark coordinates remain within source-pixel tolerance;
 - late join does not rebase source UTC;
 - reconnect does not create a persistent timing offset;
 - events around a segment boundary select the correct side of the boundary;
-- missing RTCP/NTP mapping produces `unaligned`, never a guessed alignment;
+- missing RTCP/NTP mapping is reported as degraded absolute-time quality but
+  cannot cause a different canonical frame to be selected;
 - recording restart or early segment closure uses manifest duration correctly.
 
 The acceptance artifact includes segment manifests, JSON, overlay video, raw
@@ -265,21 +288,22 @@ hashes, and software versions. It contains no embeddings.
 
 | Condition | Required behavior |
 |---|---|
-| NTP unhealthy or host offset exceeds policy | Stop claiming aligned output |
-| RTCP Sender Report not observed yet | Buffer bounded pending metadata or emit unaligned; do not use receive UTC as source UTC |
-| Source timestamp jumps | Start a new timing epoch and require stable remapping |
-| Segment hook delayed | Retain event; resolve after manifest arrives |
-| Segment missing | Keep event unresolved with `segment_not_found` |
-| Overlapping manifests | Reject automatic selection with `segment_overlap` |
-| Recording renamed without manifest | Mark recording metadata insufficient |
-| Variable frame rate | Seek by media timestamp; do not infer frame from nominal FPS |
+| NTP unhealthy or host offset exceeds policy | Degrade absolute-time quality; preserve exact frame identity |
+| RTCP Sender Report not observed yet | Omit trusted source UTC; never substitute receive UTC |
+| Source timestamp jumps | Close/fence the current segment and start a new timing epoch |
+| Segment finalization delayed | Retain event pending exact index publication |
+| Canonical frame absent from finalized index | Keep event unresolved with `canonical_frame_not_recorded` |
+| Duplicate canonical frame ID | Fail segment publication and raise an integrity error |
+| Recording missing manifest/index | Mark recording metadata insufficient |
+| Variable frame rate | Use exact sample index; do not infer frame from nominal FPS |
 
 ## 11. Observability
 
 Required low-cardinality metrics include:
 
 - aligned and unaligned event counts by enum reason;
-- RTCP mapping age and uncertainty histograms;
+- RTCP mapping age and absolute-time quality histograms;
+- exact frame-index join success/failure counts;
 - MediaMTX-to-Mvision clock-offset health;
 - manifest delivery delay;
 - segment match latency;
@@ -305,11 +329,12 @@ This design does not implement:
 After the observability prerequisite passes, the MediaMTX implementation plan
 must cover:
 
-1. MediaMTX recording/playback/hook test profile;
-2. segment inventory and immutable manifest persistence;
-3. RTCP/NTP source-time extraction in the native live pipeline;
-4. schema-v2 protocol, persistence, and API migration;
-5. timestamp quality and failure-state handling;
-6. recording overlay resolver;
-7. deterministic late-join/reconnect/boundary acceptance harness;
-8. deployment clock-health checks and operational runbook.
+1. provider-like MediaMTX RTSP fixture profile;
+2. single canonical ingest with recording and inference branches;
+3. collision-safe canonical access-unit/frame identity propagation;
+4. exact per-segment frame index and immutable manifest persistence;
+5. RTCP/NTP source-time extraction for audit and correlation;
+6. schema-v2 protocol, persistence, and API migration;
+7. exact-index recording overlay resolver;
+8. deterministic late-inference/reconnect/boundary acceptance harness;
+9. deployment clock/integrity health checks and operational runbook.

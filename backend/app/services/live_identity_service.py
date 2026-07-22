@@ -3,12 +3,16 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 from app.config import Settings
 from app.infrastructure.live.protocol import (
     LiveObservation,
     TrackEvidenceEvent,
     TrackExpiredEvent,
 )
+from app.observability.telemetry import TelemetryRuntime
 from app.services.face_matcher import FaceMatch
 from app.services.video_identity_voting_service import VideoIdentityDecision
 from app.services.video_tracking_service import CanonicalVideoTrack, SourceTrackTemplate
@@ -58,13 +62,33 @@ class LiveIdentityService:
         settings: Settings,
         voter: IdentityVoter,
         vector_store: ReferenceVectorStore,
+        telemetry: TelemetryRuntime | None = None,
     ):
         self._settings = settings
         self._voter = voter
         self._vector_store = vector_store
+        self._telemetry = telemetry or TelemetryRuntime(enabled=False)
         self._tracks: dict[tuple[str, str, int, int], _TrackIdentity] = {}
 
     async def resolve(self, event: TrackEvidenceEvent) -> LiveIdentityDecision:
+        with self._telemetry.start_span(
+            "live.identity.resolve",
+            {
+                "camera_id": event.header.camera_id,
+                "run_id": event.header.run_id,
+                "generation": event.header.generation,
+            },
+        ) as span:
+            decision = await self._resolve(event)
+            outcome = (
+                "ambiguous"
+                if decision.identity_state == "pending"
+                else decision.identity_state
+            )
+            span.set_attribute("outcome", outcome)
+            return decision
+
+    async def _resolve(self, event: TrackEvidenceEvent) -> LiveIdentityDecision:
         key = (
             event.header.camera_id,
             event.header.run_id,
@@ -93,7 +117,10 @@ class LiveIdentityService:
         try:
             vote = await self._voter.resolve(self._canonical_track(event, state))
         except Exception:
-            logger.warning("Live identity query failed", exc_info=True)
+            span = trace.get_current_span()
+            span.set_attribute("error_code", "LIVE_IDENTITY_QUERY_FAILED")
+            span.set_status(Status(StatusCode.ERROR, "LIVE_IDENTITY_QUERY_FAILED"))
+            logger.warning("Live identity query failed")
             return self._current_decision(state, quality)
         state.nearest_known_score = vote.score
         if vote.match is None:
@@ -210,7 +237,7 @@ class LiveIdentityService:
                 return None
             return normalized
         except Exception:
-            logger.warning("Live identity reference retrieval failed", exc_info=True)
+            logger.warning("Live identity reference retrieval failed")
             return None
 
     @staticmethod

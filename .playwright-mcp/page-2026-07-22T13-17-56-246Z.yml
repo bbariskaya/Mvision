@@ -1,0 +1,41 @@
+- main [ref=e7]:
+  - log [ref=e8]
+  - generic [ref=e15]:
+    - generic [ref=e17]:
+      - generic [ref=e18]:
+        - img "Grafana" [ref=e19]
+        - heading "Welcome to Grafana" [level=1] [ref=e21]
+      - generic [ref=e25]:
+        - generic [ref=e26]:
+          - generic [ref=e27]: Email or username
+          - textbox "Email or username" [active] [ref=e34]:
+            - /placeholder: email or username
+        - generic [ref=e35]:
+          - generic [ref=e36]: Password
+          - generic [ref=e42]:
+            - textbox "Password" [ref=e43]:
+              - /placeholder: password
+            - switch "Show password" [ref=e45] [cursor=pointer]
+        - button "Log in" [ref=e48] [cursor=pointer]
+        - link "Forgot your password?" [ref=e51] [cursor=pointer]:
+          - /url: /user/password/send-reset-email
+    - list [ref=e55]:
+      - listitem [ref=e56]:
+        - link "Documentation" [ref=e59] [cursor=pointer]:
+          - /url: https://grafana.com/docs/grafana/latest/?utm_source=grafana_footer
+        - text: "|"
+      - listitem [ref=e60]:
+        - link "Support" [ref=e63] [cursor=pointer]:
+          - /url: https://grafana.com/products/enterprise/?utm_source=grafana_footer
+        - text: "|"
+      - listitem [ref=e64]:
+        - link "Community" [ref=e67] [cursor=pointer]:
+          - /url: https://community.grafana.com/?utm_source=grafana_footer
+        - text: "|"
+      - listitem [ref=e68]:
+        - link "Open Source" [ref=e69] [cursor=pointer]:
+          - /url: https://grafana.com/oss/grafana?utm_source=grafana_footer
+        - text: "|"
+      - listitem [ref=e70]:
+        - link "Grafana v13.1.0 (b309c9bb3b)" [ref=e71] [cursor=pointer]:
+          - /url: https://github.com/grafana/grafana/blob/main/CHANGELOG.md

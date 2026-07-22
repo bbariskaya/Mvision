@@ -14,6 +14,18 @@ class Settings(BaseSettings):
     app_name: str = "MergenVision API"
     debug: bool = False
 
+    otel_enabled: bool = False
+    otel_service_name: str = "mvision-api"
+    otel_service_version: str = "0.1.0"
+    otel_deployment_environment: str = "development"
+    otel_service_instance_id: str = "mvision-api-0"
+    otel_exporter_otlp_endpoint: str = "http://otel-collector:4317"
+    otel_export_timeout_seconds: float = Field(default=2.0, gt=0)
+    otel_bsp_max_queue_size: int = Field(default=2048, gt=0)
+    otel_bsp_max_export_batch_size: int = Field(default=256, gt=0)
+    otel_bsp_schedule_delay_millis: int = Field(default=500, gt=0)
+    otel_shutdown_timeout_seconds: float = Field(default=3.0, gt=0)
+
     database_url: str = Field(
         default="postgresql+psycopg://mergen:mergen@postgres:5432/mergenvision",
         description="Async SQLAlchemy PostgreSQL URL.",
@@ -100,6 +112,8 @@ class Settings(BaseSettings):
     live_rtsp_output_host: str = "localhost"
     live_rtsp_output_port: int = 8554
     live_rtp_udp_port: int = 5400
+    live_metrics_host: str = "0.0.0.0"
+    live_metrics_port: int = Field(default=9464, ge=1, le=65535)
 
     @model_validator(mode="after")
     def validate_live_secrets(self) -> "Settings":
@@ -115,6 +129,8 @@ class Settings(BaseSettings):
         )
         if self.live_enabled and (not encryption_keys or not fingerprint_key):
             raise ValueError("LIVE_SECRET_CONFIGURATION_REQUIRED")
+        if self.otel_bsp_max_export_batch_size > self.otel_bsp_max_queue_size:
+            raise ValueError("OTEL_BATCH_SIZE_EXCEEDS_QUEUE_SIZE")
         return self
 
     @property

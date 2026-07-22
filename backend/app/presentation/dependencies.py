@@ -20,6 +20,8 @@ from app.infrastructure.live.uri_cipher import LiveUriCipher
 from app.infrastructure.object_storage.minio_adapter import MinIOAdapter
 from app.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
 from app.infrastructure.video.native_runner import NativeVideoRunner
+from app.observability.metrics import MvisionMetrics
+from app.observability.telemetry import TelemetryRuntime
 from app.services.enrollment_service import EnrollmentService
 from app.services.face_matcher import FaceMatcher
 from app.services.face_sample_persistence_service import FaceSamplePersistenceService
@@ -56,7 +58,10 @@ class ServiceContainer:
 
 
 @lru_cache
-def get_container() -> ServiceContainer:
+def get_container(
+    telemetry: TelemetryRuntime | None = None,
+    metrics: MvisionMetrics | None = None,
+) -> ServiceContainer:
     settings = get_settings()
     identity_repo = FaceIdentityRepository()
     sample_repo = FaceSampleRepository()
@@ -69,7 +74,7 @@ def get_container() -> ServiceContainer:
     live_run_repo = LiveRunRepository()
     live_event_repo = LiveEventRepository()
     minio = MinIOAdapter(settings)
-    qdrant = QdrantAdapter(settings)
+    qdrant = QdrantAdapter(settings, telemetry)
     workers = GpuWorkerPool(settings.gpu_socket_paths, settings.gpu_worker_timeout_seconds)
     matcher = FaceMatcher(settings, identity_repo, qdrant)
     samples = FaceSamplePersistenceService(
@@ -137,12 +142,13 @@ def get_container() -> ServiceContainer:
         output_host=settings.live_rtsp_output_host,
         output_port=settings.live_rtsp_output_port,
     )
-    live_identity = LiveIdentityService(settings, video_voter, qdrant)
+    live_identity = LiveIdentityService(settings, video_voter, qdrant, telemetry)
     live_events = LiveEventService(
         settings,
         live_event_repo,
         minio,
         InMemoryLiveNotifier(),
+        telemetry=telemetry,
     )
     live_supervisor = LiveSupervisor(
         settings,
@@ -152,6 +158,8 @@ def get_container() -> ServiceContainer:
         NativeLiveRunner(settings),
         identity_service=live_identity,
         event_service=live_events,
+        telemetry=telemetry,
+        metrics=metrics,
     )
     return ServiceContainer(
         settings,

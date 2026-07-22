@@ -381,6 +381,8 @@ class LiveCamera(Base):
     uri_ciphertext: Mapped[str] = mapped_column(String(8192), nullable=False)
     uri_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     desired_state: Mapped[str] = mapped_column(String(16), nullable=False, default="stopped")
+    desired_traceparent: Mapped[str | None] = mapped_column(String(55))
+    desired_tracestate: Mapped[str | None] = mapped_column(String(512))
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -429,6 +431,8 @@ class LiveCameraRun(Base):
     lease_token: Mapped[str | None] = mapped_column(String(64))
     lease_expires_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    traceparent: Mapped[str] = mapped_column(String(55), nullable=False)
+    tracestate: Mapped[str | None] = mapped_column(String(512))
     first_frame_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     last_frame_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
     stopped_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))

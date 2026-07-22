@@ -5,6 +5,8 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal, Protocol
 from uuid import NAMESPACE_URL, uuid5
 
+from opentelemetry.trace import Status, StatusCode
+
 from app.config import Settings
 from app.infrastructure.database.models import LiveDetectionEvent
 from app.infrastructure.database.repositories import LiveEventRepository
@@ -15,6 +17,7 @@ from app.infrastructure.live.protocol import (
     TrackEvidenceEvent,
     TrackExpiredEvent,
 )
+from app.observability.telemetry import TelemetryRuntime
 from app.services.live_identity_service import LiveIdentityDecision
 
 logger = logging.getLogger(__name__)
@@ -67,12 +70,14 @@ class LiveEventService:
         storage: LiveSnapshotStorage,
         notifier: LiveNotifier,
         *,
+        telemetry: TelemetryRuntime | None = None,
         session_factory: SessionFactory = AsyncSessionLocal,
     ):
         self._settings = settings
         self._events = events
         self._storage = storage
         self._notifier = notifier
+        self._telemetry = telemetry or TelemetryRuntime(enabled=False)
         self._session_factory = session_factory
         self._revisions: dict[tuple[str, int], int] = {}
         self._pending: dict[tuple[str, int], tuple[TrackEvidenceEvent, LiveIdentityDecision]] = {}
@@ -152,15 +157,22 @@ class LiveEventService:
         snapshot_bucket = None
         snapshot_object_key = None
         uploaded = False
-        try:
-            info = await self._storage.upload_live_snapshot(
-                object_key, evidence.representative_aligned_jpeg, event_id
-            )
-            snapshot_bucket = info.bucket
-            snapshot_object_key = info.object_key
-            uploaded = True
-        except Exception:
-            snapshot_status = "failed"
+        with self._telemetry.start_span(
+            "live.snapshot.upload", {"dependency": "minio"}
+        ) as snapshot_span:
+            try:
+                info = await self._storage.upload_live_snapshot(
+                    object_key, evidence.representative_aligned_jpeg, event_id
+                )
+                snapshot_bucket = info.bucket
+                snapshot_object_key = info.object_key
+                uploaded = True
+            except Exception:
+                snapshot_status = "failed"
+                snapshot_span.set_attribute("error_code", "SNAPSHOT_UPLOAD_FAILED")
+                snapshot_span.set_status(
+                    Status(StatusCode.ERROR, "SNAPSHOT_UPLOAD_FAILED")
+                )
 
         best = max(evidence.observations, key=lambda item: item.quality_score)
         match = decision.match
@@ -195,25 +207,36 @@ class LiveEventService:
             snapshot_bucket=snapshot_bucket,
             snapshot_object_key=snapshot_object_key,
         )
-        try:
-            async with self._session_factory() as session:
-                persisted = await self._events.create_once(session, row)
-                await session.commit()
-        except Exception:
-            if uploaded:
-                try:
-                    await self._storage.delete_live_snapshot(object_key)
-                except Exception:
-                    pass
-                logger.error(
-                    "Live event database failure cleaned snapshot event_id=%s",
-                    event_id,
+        with self._telemetry.start_span(
+            "live.event.commit", {"dependency": "postgres"}
+        ) as commit_span:
+            try:
+                async with self._session_factory() as session:
+                    persisted = await self._events.create_once(session, row)
+                    await session.commit()
+            except Exception:
+                commit_span.set_attribute("error_code", "LIVE_EVENT_COMMIT_FAILED")
+                commit_span.set_status(
+                    Status(StatusCode.ERROR, "LIVE_EVENT_COMMIT_FAILED")
                 )
-            raise
-        try:
-            await self._notifier.publish(persisted)
-        except Exception:
-            pass
+                if uploaded:
+                    try:
+                        await self._storage.delete_live_snapshot(object_key)
+                    except Exception:
+                        pass
+                    logger.error(
+                        "Live event database failure cleaned snapshot event_id=%s",
+                        event_id,
+                    )
+                raise
+        with self._telemetry.start_span("live.notification.publish") as notification_span:
+            try:
+                await self._notifier.publish(persisted)
+            except Exception:
+                notification_span.set_attribute("error_code", "LIVE_NOTIFICATION_FAILED")
+                notification_span.set_status(
+                    Status(StatusCode.ERROR, "LIVE_NOTIFICATION_FAILED")
+                )
         return persisted
 
     def _assignment(

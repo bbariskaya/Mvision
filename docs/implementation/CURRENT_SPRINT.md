@@ -8,9 +8,10 @@ calismasini yetkilendirir. Phase 1 ve Phase 2 belgelerindeki RTSP non-goal
 ifadeleri yalniz kendi tamamlanmis fazlarinin siniridir; bu sprinti engellemez.
 
 Packet 0 belgeleri, Packet 1 compatibility/control-plane contracts, Packet 2
-protocol/native track state ve Packet 3 Task 7 RTSP ingest/inference zinciri
-tamamlanmistir. Reconnect, output pipeline, supervisor ve required self-hosted
-OpenTelemetry/Prometheus/Loki/Tempo/Grafana source'u henuz yazilmamistir.
+protocol/native track state, RTSP ingest/inference, reconnect, output pipeline,
+supervisor ve required self-hosted OpenTelemetry/Prometheus/Loki/Tempo/Grafana
+platform source'u tamamlanmistir. Observability fault-isolation, retention
+lifecycle, overhead A/B ve 24-hour soak gate'leri henuz tamamlanmamistir.
 
 ## Objective
 
@@ -278,9 +279,17 @@ the relevant gates.
     tests, `8` isolated repository tests, cross-language parity, native
     protocol/track-state/worker-process tests, Ruff, mypy and
     `git diff --check` all passed.
-- Annotated RTSP output, snapshots and 24-hour soak: `NOT_PROVEN`.
+- Annotated RTSP output and live snapshots: `RUNTIME_VERIFIED`; 24-hour soak:
+  `NOT_PROVEN`.
 - OpenTelemetry trace continuity, telemetry privacy/cardinality, Collector,
-  Prometheus, Loki, Tempo, Grafana dashboards/correlations, retention,
-  fault-isolation and overhead A/B: `DESIGN_APPROVED`, implementation
-  `NOT_STARTED`.
+  Prometheus, Loki, Tempo, Grafana provisioning and datasource correlations:
+  `IMPLEMENTED`.
+- Balanced `Live Camera Operations` dashboard: live FPS, tracked/eligible face
+  throughput, embedding/cosine yield, compact anomaly stats, recent error traces
+  and correlated logs are `RUNTIME_VERIFIED`.
+- Safe `OBSERVABILITY_SMOKE_TEST` acceptance: the same trace ID was found through
+  Grafana in Tempo and Loki while live processing remained `ACTIVE`; dashboard,
+  Prometheus, Tempo and Loki checks all passed.
+- Observability component fault isolation, disposable-volume retention lifecycle
+  proof, enabled/disabled overhead A/B and 24-hour soak remain `NOT_PROVEN`.
 - No production volume reset or destructive data operation was performed.

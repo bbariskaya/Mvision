@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: mvision-api
+    static_configs:
+      - targets: [mvision-live-api:8000]
+  - job_name: mvision-live-worker
+    static_configs:
+      - targets: [mvision-live-worker:9464]
+  - job_name: otel-collector
+    static_configs:
+      - targets: [otel-collector:8888, otel-collector:8889]
+  - job_name: loki
+    metrics_path: /metrics
+    static_configs:
+      - targets: [loki:3100]
+  - job_name: tempo
+    metrics_path: /metrics
+    static_configs:
+      - targets: [tempo:3200]

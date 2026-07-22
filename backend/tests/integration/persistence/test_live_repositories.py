@@ -12,6 +12,7 @@ from app.infrastructure.database.repositories import (
 )
 
 UTC = datetime.UTC
+TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 
 
 async def _camera(db_session, name: str):
@@ -28,7 +29,13 @@ async def test_camera_claim_creates_first_starting_generation(db_session):
     cameras = LiveCameraRepository()
     runs = LiveRunRepository()
     camera = await _camera(db_session, "north")
-    await cameras.set_desired(db_session, camera.camera_id, "running")
+    await cameras.set_desired(
+        db_session,
+        camera.camera_id,
+        "running",
+        traceparent=TRACEPARENT,
+        tracestate="vendor=value",
+    )
     now = datetime.datetime.now(UTC)
 
     run = await runs.claim(
@@ -45,6 +52,8 @@ async def test_camera_claim_creates_first_starting_generation(db_session):
     assert run.runtime_state == "STARTING"
     assert run.camera_id == camera.camera_id
     assert run.lease_expires_at == now + datetime.timedelta(seconds=30)
+    assert run.traceparent == TRACEPARENT
+    assert run.tracestate == "vendor=value"
 
 
 @pytest.mark.asyncio

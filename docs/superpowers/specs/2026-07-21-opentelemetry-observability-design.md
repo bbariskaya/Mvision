@@ -26,6 +26,40 @@ network work to a pad probe, or expose recognition secrets or personal data.
 - Prove observability overhead and failure isolation with real GPU/runtime
   acceptance, not unit mocks.
 - Use only self-hosted components in the required path.
+- Establish observability as a reusable platform contract for every future
+  Mvision phase, not a livestream-only add-on.
+
+## Mandatory Contract For Future Phases
+
+Every future phase, service, worker, protocol, dependency integration, and
+background job must define its telemetry contract before implementation. A
+phase is not complete when only its product behavior works.
+
+Each phase must add and verify, as applicable:
+
+- low-cardinality semantic spans at operation boundaries, never per-frame or
+  per-item hot-loop spans;
+- structured, trace-correlated, application-redacted logs;
+- bounded metrics with enum-only labels and documented units;
+- W3C context propagation across HTTP, process, MessagePack, and asynchronous
+  boundaries;
+- dashboard and alert coverage for its operational failure modes;
+- privacy/cardinality scans covering all newly introduced values;
+- Collector/backend outage tests proving product work remains fail-open;
+- enabled-versus-disabled overhead evidence on the same deterministic input;
+- an update to the shared telemetry semantic-convention and source-attribution
+  ledgers.
+
+The reusable Python telemetry runtime, Collector path, datasource UIDs,
+redaction policy, resource attributes, and acceptance-report format are shared
+platform interfaces. Future phases extend these interfaces instead of creating
+parallel exporters, custom telemetry backends, dynamic naming schemes, or
+phase-specific Grafana configuration outside version control.
+
+Every implementation plan must contain an explicit observability task and an
+observability completion gate. Any gate that cannot be exercised in that phase
+is recorded as `NOT_TESTED` with a reason; it is never silently omitted or
+promoted by mocked evidence.
 
 ## Non-Goals
 
@@ -306,6 +340,8 @@ Official behavior reviewed for this design:
 - Tempo Collector setup:
   `https://grafana.com/docs/tempo/latest/set-up-for-tracing/instrument-send/set-up-collector/otel-collector/`
 
-Context7 documentation lookup was attempted first but its monthly quota was
-exhausted. Exact package/image versions and configuration keys must be checked
-again against official release documentation during implementation.
+Context7 was rechecked on 2026-07-22 against the stable OpenTelemetry Python
+documentation for `TracerProvider`, `LoggerProvider`, batch span/log processors,
+OTLP gRPC export, resources, and bounded shutdown. PyPI release indexes and
+official project release pages must still be recorded with exact package/image
+versions, licenses, and container digests before deployment artifacts are added.

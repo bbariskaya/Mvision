@@ -1,4 +1,5 @@
 import datetime
+import secrets
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,10 +62,16 @@ class LiveRunRepository:
             lease_token=lease_token,
             lease_expires_at=now + datetime.timedelta(seconds=lease_seconds),
             started_at=now,
+            traceparent=camera.desired_traceparent or self._new_traceparent(),
+            tracestate=camera.desired_tracestate,
         )
         session.add(run)
         await session.flush()
         return run
+
+    @staticmethod
+    def _new_traceparent() -> str:
+        return f"00-{secrets.token_hex(16)}-{secrets.token_hex(8)}-01"
 
     async def renew(
         self,

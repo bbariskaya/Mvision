@@ -181,6 +181,33 @@ release artifacts, licenses and image digests are intentionally frozen in Task
 reviewed from official project documentation listed in
 `docs/superpowers/specs/2026-07-21-opentelemetry-observability-design.md`.
 
+## Observability Platform Artifact Freeze (2026-07-22)
+
+Python packages selected for Python 3.12 from the official PyPI release index:
+
+| Artifact | Version | License | Source |
+|---|---:|---|---|
+| OpenTelemetry Python API | `1.44.0` | Apache-2.0 | `https://github.com/open-telemetry/opentelemetry-python` |
+| OpenTelemetry Python SDK | `1.44.0` | Apache-2.0 | `https://github.com/open-telemetry/opentelemetry-python` |
+| OTLP Proto gRPC exporter | `1.44.0` | Apache-2.0 | `https://github.com/open-telemetry/opentelemetry-python` |
+| Prometheus Python client | `0.25.0` | Apache-2.0 | `https://github.com/prometheus/client_python` |
+
+Container tags were resolved through Docker's manifest API and frozen to the
+linux/amd64 image digest. Compose must use the digest, not the mutable tag or
+manifest-list digest.
+
+| Artifact | Reviewed tag | linux/amd64 digest | License |
+|---|---:|---|---|
+| OpenTelemetry Collector Contrib | `0.157.0` | `sha256:4eb842091c796156d4d3c994eb22ba793590f5723719dbf6b8436cb4dfc17f48` | Apache-2.0 |
+| Prometheus | `v3.13.0` | `sha256:0e698e35e50d1ddc2d11a4a55b089fe62eb71358a5c204dfafd21bdf8ffe04b8` | Apache-2.0 |
+| Loki | `3.7.3` | `sha256:d14b3a2c419b72fe27cd094c017863bd37a5ea9ac7d72f35bcd25f5bd081dc47` | AGPL-3.0 |
+| Tempo | `3.0.0` | `sha256:3ecd1da98d89d49ea7ba3b0b283487e06f09ca3d9422a61fdde310f93b3e6e4d` | AGPL-3.0 |
+| Grafana OSS | `13.1.0` | `sha256:6ea068891652aa6a65ca9065c26b89de939653803c836426970305c11fd00534` | AGPL-3.0 |
+
+This artifact freeze is an implementation input, not a completed distribution
+approval. AGPL distribution review remains a release gate. No image was pulled
+or service started while collecting these manifest digests.
+
 ## Task 8 Reconnect and Teardown Adaptation
 
 - Osprey contribution: `nvurisrcbin` reconnect-property selection, explicit
