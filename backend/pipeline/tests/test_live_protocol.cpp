@@ -60,9 +60,10 @@ mvision::StartCommand start_command() {
           "preprocess.txt",
           "sgie.txt",
           "tracker.yml",
-          "/live/camera",
-          5400,
-          200,
+           "/live/camera",
+           5400,
+           8554,
+           200,
           10,
           -1,
           5'000'000'000};
@@ -276,8 +277,8 @@ void run_unit_tests() {
                &wrong_generation);
 
   mvision::IdentityAssignment assignment{
-      header("identity_assignment"), 42, 3, "known", std::string("Ada"),
-      std::string(kFaceId), 0.87F, 12};
+      header("identity_assignment"), 42, 3, 1, "known", std::string("Ada"),
+      std::string(kFaceId), 0.87F, 0.8F, observation().embedding, 12};
   mvision::DecodeContext revision_context{kCameraId, kRunId, 1, {}};
   static_cast<void>(mvision::decode_live_message(
       mvision::encode_live_message(assignment), &revision_context));
@@ -344,6 +345,9 @@ void run_parity() {
   assert(assignment.face_id == std::optional<std::string>(kFaceId));
   assert(assignment.match_score.has_value());
   assert(std::fabs(*assignment.match_score - 0.87F) < 1e-6F);
+  assert(assignment.recognition_threshold == std::optional<float>(0.8F));
+  assert(assignment.reference_embedding.has_value());
+  assert((*assignment.reference_embedding)[0] == 1.0F);
   assert(assignment.decision_sequence == 12);
   assert(stop.header.sequence == 3);
   assert(stop.reason == "operator");

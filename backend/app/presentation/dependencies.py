@@ -15,6 +15,7 @@ from app.infrastructure.database.repositories import (
     VideoTrackRepository,
 )
 from app.infrastructure.gpu.worker_pool import GpuWorkerPool
+from app.infrastructure.live.native_runner import NativeLiveRunner
 from app.infrastructure.live.uri_cipher import LiveUriCipher
 from app.infrastructure.object_storage.minio_adapter import MinIOAdapter
 from app.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
@@ -24,6 +25,9 @@ from app.services.face_matcher import FaceMatcher
 from app.services.face_sample_persistence_service import FaceSamplePersistenceService
 from app.services.identity_service import IdentityService
 from app.services.live_camera_service import LiveCameraService
+from app.services.live_event_service import InMemoryLiveNotifier, LiveEventService
+from app.services.live_identity_service import LiveIdentityService
+from app.services.live_supervisor import LiveSupervisor
 from app.services.process_query_service import ProcessQueryService
 from app.services.recognition_service import RecognitionService
 from app.services.video_identity_voting_service import VideoIdentityVotingService
@@ -48,6 +52,7 @@ class ServiceContainer:
     video_results: VideoResultService
     video_processor: VideoJobProcessor
     live_cameras: LiveCameraService
+    live_supervisor: LiveSupervisor
 
 
 @lru_cache
@@ -132,6 +137,22 @@ def get_container() -> ServiceContainer:
         output_host=settings.live_rtsp_output_host,
         output_port=settings.live_rtsp_output_port,
     )
+    live_identity = LiveIdentityService(settings, video_voter, qdrant)
+    live_events = LiveEventService(
+        settings,
+        live_event_repo,
+        minio,
+        InMemoryLiveNotifier(),
+    )
+    live_supervisor = LiveSupervisor(
+        settings,
+        live_camera_repo,
+        live_run_repo,
+        live_cipher,
+        NativeLiveRunner(settings),
+        identity_service=live_identity,
+        event_service=live_events,
+    )
     return ServiceContainer(
         settings,
         minio,
@@ -145,6 +166,7 @@ def get_container() -> ServiceContainer:
         video_results,
         video_processor,
         live_cameras,
+        live_supervisor,
     )
 
 

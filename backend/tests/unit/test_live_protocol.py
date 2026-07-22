@@ -63,6 +63,7 @@ def _messages():
             "tracker.yml",
             "/live/camera",
             5400,
+            8554,
             200,
             10,
             -1,
@@ -72,10 +73,13 @@ def _messages():
             _header("identity_assignment", sequence=8),
             42,
             3,
+            1,
             "known",
             "Ada",
             "019b0000-0000-7000-8000-000000000003",
             0.87,
+            0.8,
+            (1.0,) + (0.0,) * 511,
             12,
         ),
         StopCommand(_header("stop", sequence=9), "operator", 2_000_000_000),
@@ -238,6 +242,31 @@ def test_rejects_out_of_order_assignment_revision() -> None:
 
     with pytest.raises(ValueError, match="^STALE_ASSIGNMENT_REVISION$"):
         context.decode(encode_message(assignment))
+
+
+@pytest.mark.parametrize(
+    ("state", "reference", "code"),
+    [
+        ("known", None, "INVALID_IDENTITY_ASSIGNMENT"),
+        ("known", (1.0,) + (0.0,) * 510, "INVALID_EMBEDDING"),
+        ("known", (math.nan,) + (0.0,) * 511, "NON_FINITE_VALUE"),
+        ("unknown", (1.0,) + (0.0,) * 511, "INVALID_IDENTITY_ASSIGNMENT"),
+    ],
+)
+def test_assignment_requires_valid_reference_embedding(
+    state: str, reference: tuple[float, ...] | None, code: str
+) -> None:
+    payload = _payload(_messages()[1])
+    payload["identity_state"] = state
+    payload["reference_embedding"] = reference
+    if state == "unknown":
+        payload["display_name"] = None
+        payload["face_id"] = None
+        payload["match_score"] = None
+        payload["recognition_threshold"] = None
+
+    with pytest.raises(ValueError, match=f"^{code}$"):
+        decode_message(_frame(payload))
 
 
 @pytest.mark.parametrize(

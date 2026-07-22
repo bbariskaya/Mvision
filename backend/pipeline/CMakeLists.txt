@@ -83,6 +83,22 @@ target_compile_options(
 )
 add_test(NAME live_track_state COMMAND test_live_track_state)
 
+add_library(mvision_live_osd_state src/live_osd_state.cpp)
+target_include_directories(mvision_live_osd_state PUBLIC include)
+target_link_libraries(
+    mvision_live_osd_state PUBLIC mvision_live_protocol mvision_live_track_state
+)
+target_compile_options(
+    mvision_live_osd_state PRIVATE -Wall -Wextra -Wpedantic -Werror
+)
+
+add_executable(test_live_osd_state tests/test_live_osd_state.cpp)
+target_link_libraries(test_live_osd_state PRIVATE mvision_live_osd_state)
+target_compile_options(
+    test_live_osd_state PRIVATE -Wall -Wextra -Wpedantic -Werror -UNDEBUG
+)
+add_test(NAME live_osd_state COMMAND test_live_osd_state)
+
 add_executable(inspect_live_runtime tools/inspect_live_runtime.cpp)
 target_link_libraries(
     inspect_live_runtime
@@ -148,8 +164,10 @@ target_link_libraries(
     PUBLIC
         mvision_live_protocol
         mvision_live_track_state
+        mvision_live_osd_state
         mvision_video_pipeline
         PkgConfig::GSTREAMER
+        PkgConfig::GSTREAMER_RTSP_SERVER
         CUDA::cudart
         ${NVDS_GST_META_LIBRARY}
         ${NVDS_META_LIBRARY}
@@ -162,6 +180,32 @@ target_compile_options(
 add_executable(smoke_live_pipeline tools/smoke_live_pipeline.cpp)
 target_link_libraries(smoke_live_pipeline PRIVATE mvision_live_pipeline)
 target_compile_options(smoke_live_pipeline PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(test_live_lifecycle tests/test_live_lifecycle.cpp)
+target_link_libraries(test_live_lifecycle PRIVATE mvision_live_pipeline)
+target_compile_options(test_live_lifecycle PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME live_lifecycle COMMAND test_live_lifecycle)
+
+add_executable(mvision_live_worker src/live_worker_main.cpp)
+add_library(mvision_live_worker_queue src/live_worker_queue.cpp)
+target_include_directories(mvision_live_worker_queue PUBLIC include)
+target_link_libraries(mvision_live_worker_queue PUBLIC mvision_live_protocol)
+target_compile_options(
+    mvision_live_worker_queue PRIVATE -Wall -Wextra -Wpedantic -Werror
+)
+target_link_libraries(
+    mvision_live_worker PRIVATE mvision_live_pipeline mvision_live_worker_queue
+)
+target_compile_options(mvision_live_worker PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
+add_executable(test_live_worker_process tests/test_live_worker_process.cpp)
+target_include_directories(test_live_worker_process PRIVATE ${MSGPACK_INCLUDE_DIR})
+target_link_libraries(
+    test_live_worker_process PRIVATE mvision_live_protocol mvision_live_worker_queue
+)
+target_compile_options(
+    test_live_worker_process PRIVATE -Wall -Wextra -Wpedantic -Werror
+)
 
 add_library(mvision_pipeline src/image_source_pool.cpp)
 target_include_directories(mvision_pipeline PUBLIC include PRIVATE ${DEEPSTREAM_INCLUDE_DIR})

@@ -101,6 +101,7 @@ class IdentityAssignmentState {
   TrackIdentityState state_ = TrackIdentityState::Pending;
   std::optional<std::string> face_id_;
   std::uint64_t revision_{};
+  std::uint64_t identity_epoch_{1};
 };
 
 }  // namespace mvision

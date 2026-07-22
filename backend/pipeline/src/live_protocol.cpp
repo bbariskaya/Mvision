@@ -290,11 +290,17 @@ LiveMessage decode_payload(const ObjectMap& values) {
   if (header.message_type == "start") {
     validate_fields(values,
                     {"uri", "gpu_id", "pgie_config_path", "preprocess_config_path",
-                     "sgie_config_path", "tracker_config_path", "output_mount_path",
-                     "output_udp_port", "latency_ms", "reconnect_interval_seconds",
-                     "reconnect_attempts", "frame_timeout_ns"});
+                      "sgie_config_path", "tracker_config_path", "output_mount_path",
+                      "output_udp_port", "output_rtsp_port", "latency_ms",
+                      "reconnect_interval_seconds", "reconnect_attempts",
+                      "frame_timeout_ns"});
     const auto port = unsigned_integer(required(values, "output_udp_port"), 1);
-    if (port > std::numeric_limits<std::uint16_t>::max()) fail("INVALID_INTEGER");
+    const auto rtsp_port =
+        unsigned_integer(required(values, "output_rtsp_port"), 1);
+    if (port > std::numeric_limits<std::uint16_t>::max() ||
+        rtsp_port > std::numeric_limits<std::uint16_t>::max()) {
+      fail("INVALID_INTEGER");
+    }
     const auto attempts = signed_integer(required(values, "reconnect_attempts"));
     if (attempts < -1 || attempts > std::numeric_limits<std::int32_t>::max()) {
       fail("INVALID_INTEGER");
@@ -309,6 +315,7 @@ LiveMessage decode_payload(const ObjectMap& values) {
         string_value(required(values, "tracker_config_path")),
         string_value(required(values, "output_mount_path")),
         static_cast<std::uint16_t>(port),
+        static_cast<std::uint16_t>(rtsp_port),
         static_cast<std::uint32_t>(unsigned_integer(required(values, "latency_ms"))),
         static_cast<std::uint32_t>(
             unsigned_integer(required(values, "reconnect_interval_seconds"))),
@@ -316,21 +323,49 @@ LiveMessage decode_payload(const ObjectMap& values) {
         unsigned_integer(required(values, "frame_timeout_ns"), 1)};
   }
   if (header.message_type == "identity_assignment") {
-    validate_fields(values, {"tracker_id", "assignment_revision", "identity_state",
-                             "display_name", "face_id", "match_score",
+    validate_fields(values, {"tracker_id", "assignment_revision", "identity_epoch",
+                             "identity_state", "display_name", "face_id",
+                             "match_score", "recognition_threshold",
+                             "reference_embedding",
                              "decision_sequence"});
     const auto state = string_value(required(values, "identity_state"));
     if (state != "known" && state != "unknown") fail("INVALID_PAYLOAD");
+    auto display_name = optional_string(required(values, "display_name"));
     auto face_id = optional_string(required(values, "face_id"));
     if (face_id.has_value() && !canonical_uuid(*face_id)) fail("INVALID_UUID");
+    auto match_score = optional_float(required(values, "match_score"));
+    auto recognition_threshold =
+        optional_float(required(values, "recognition_threshold"));
+    std::optional<std::array<float, 512>> reference_embedding;
+    const auto& reference = required(values, "reference_embedding");
+    if (state == "known") {
+      if (!display_name.has_value() || !face_id.has_value() ||
+          !match_score.has_value() || !recognition_threshold.has_value() ||
+          reference.is_nil()) {
+        fail("INVALID_IDENTITY_ASSIGNMENT");
+      }
+      reference_embedding =
+          float_array<512>(reference, "INVALID_EMBEDDING");
+      double squared_norm = 0.0;
+      for (const float value : *reference_embedding) squared_norm += value * value;
+      const double norm = std::sqrt(squared_norm);
+      if (norm < 0.99 || norm > 1.01) fail("INVALID_EMBEDDING_NORM");
+    } else if (display_name.has_value() || face_id.has_value() ||
+               match_score.has_value() || recognition_threshold.has_value() ||
+               !reference.is_nil()) {
+      fail("INVALID_IDENTITY_ASSIGNMENT");
+    }
     return IdentityAssignment{
         header,
         unsigned_integer(required(values, "tracker_id")),
         unsigned_integer(required(values, "assignment_revision"), 1),
+        unsigned_integer(required(values, "identity_epoch"), 1),
         state,
-        optional_string(required(values, "display_name")),
+        std::move(display_name),
         std::move(face_id),
-        optional_float(required(values, "match_score")),
+        match_score,
+        recognition_threshold,
+        std::move(reference_embedding),
         unsigned_integer(required(values, "decision_sequence"))};
   }
   if (header.message_type == "stop") {
@@ -492,7 +527,7 @@ std::vector<std::uint8_t> encode_live_message(const LiveMessage& message) {
       [&](const auto& value) {
         using Message = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<Message, StartCommand>) {
-          packer.pack_map(20);
+          packer.pack_map(21);
           pack_header(packer, value.header);
           pack_field(packer, "uri", value.uri);
           pack_field(packer, "gpu_id", value.gpu_id);
@@ -502,20 +537,25 @@ std::vector<std::uint8_t> encode_live_message(const LiveMessage& message) {
           pack_field(packer, "tracker_config_path", value.tracker_config_path);
           pack_field(packer, "output_mount_path", value.output_mount_path);
           pack_field(packer, "output_udp_port", value.output_udp_port);
+          pack_field(packer, "output_rtsp_port", value.output_rtsp_port);
           pack_field(packer, "latency_ms", value.latency_ms);
           pack_field(packer, "reconnect_interval_seconds",
                      value.reconnect_interval_seconds);
           pack_field(packer, "reconnect_attempts", value.reconnect_attempts);
           pack_field(packer, "frame_timeout_ns", value.frame_timeout_ns);
         } else if constexpr (std::is_same_v<Message, IdentityAssignment>) {
-          packer.pack_map(15);
+          packer.pack_map(18);
           pack_header(packer, value.header);
           pack_field(packer, "tracker_id", value.tracker_id);
           pack_field(packer, "assignment_revision", value.assignment_revision);
+          pack_field(packer, "identity_epoch", value.identity_epoch);
           pack_field(packer, "identity_state", value.identity_state);
           pack_optional(packer, "display_name", value.display_name);
           pack_optional(packer, "face_id", value.face_id);
           pack_optional(packer, "match_score", value.match_score);
+          pack_optional(packer, "recognition_threshold",
+                        value.recognition_threshold);
+          pack_optional(packer, "reference_embedding", value.reference_embedding);
           pack_field(packer, "decision_sequence", value.decision_sequence);
         } else if constexpr (std::is_same_v<Message, StopCommand>) {
           packer.pack_map(10);

@@ -1,3 +1,4 @@
+import asyncio
 import math
 
 from qdrant_client import AsyncQdrantClient
@@ -10,6 +11,7 @@ from qdrant_client.models import (
     PayloadSchemaType,
     PointIdsList,
     PointStruct,
+    QueryRequest,
     VectorParams,
 )
 
@@ -35,6 +37,8 @@ class QdrantAdapter:
         self._vector_size = settings.qdrant_vector_size
         distance_label = settings.qdrant_distance.upper()
         self._distance = Distance[distance_label]
+        self._setup_lock = asyncio.Lock()
+        self._setup_complete = False
 
     def _validate_payload(self, payload: dict) -> None:
         extra = set(payload.keys()) - ALLOWED_PAYLOAD_KEYS
@@ -55,38 +59,45 @@ class QdrantAdapter:
             raise VectorValidationError("Vector must be L2-normalized")
 
     async def setup(self) -> None:
-        exists = await self._client.collection_exists(self._collection)
-        if not exists:
-            await self._client.create_collection(
-                collection_name=self._collection,
-                vectors_config=VectorParams(
-                    size=self._vector_size,
-                    distance=self._distance,
-                ),
-                hnsw_config=HnswConfigDiff(
-                    m=16,
-                    ef_construct=100,
-                    payload_m=16,
-                ),
-            )
-            await self._ensure_payload_indexes()
+        if self._setup_complete:
             return
+        async with self._setup_lock:
+            if self._setup_complete:
+                return
+            exists = await self._client.collection_exists(self._collection)
+            if not exists:
+                await self._client.create_collection(
+                    collection_name=self._collection,
+                    vectors_config=VectorParams(
+                        size=self._vector_size,
+                        distance=self._distance,
+                    ),
+                    hnsw_config=HnswConfigDiff(
+                        m=16,
+                        ef_construct=100,
+                        payload_m=16,
+                    ),
+                )
+                await self._ensure_payload_indexes()
+                self._setup_complete = True
+                return
 
-        info = await self._client.get_collection(self._collection)
-        actual = info.config.params.vectors
-        if actual is None:
-            raise VectorStoreError("Collection has no vector configuration")
-        if isinstance(actual, dict):
-            raise VectorStoreError("Named vectors are not supported")
-        if actual.size != self._vector_size:
-            raise VectorStoreError(
-                f"Collection vector size mismatch: {actual.size} != {self._vector_size}"
-            )
-        if actual.distance != self._distance:
-            raise VectorStoreError(
-                f"Collection distance mismatch: {actual.distance} != {self._distance}"
-            )
-        await self._ensure_payload_indexes()
+            info = await self._client.get_collection(self._collection)
+            actual = info.config.params.vectors
+            if actual is None:
+                raise VectorStoreError("Collection has no vector configuration")
+            if isinstance(actual, dict):
+                raise VectorStoreError("Named vectors are not supported")
+            if actual.size != self._vector_size:
+                raise VectorStoreError(
+                    f"Collection vector size mismatch: {actual.size} != {self._vector_size}"
+                )
+            if actual.distance != self._distance:
+                raise VectorStoreError(
+                    f"Collection distance mismatch: {actual.distance} != {self._distance}"
+                )
+            await self._ensure_payload_indexes()
+            self._setup_complete = True
 
     async def _ensure_payload_indexes(self) -> None:
         for field in ("active", "embedding_model_version", "preprocess_version"):
@@ -214,4 +225,60 @@ class QdrantAdapter:
                 "payload": r.payload,
             }
             for r in response.points
+        ]
+
+    async def search_batch(
+        self,
+        vectors: list[list[float]],
+        top_k: int = 5,
+        filter_active: bool = True,
+        embedding_model_version: str | None = None,
+        preprocess_version: str | None = None,
+    ) -> list[list[dict]]:
+        for vector in vectors:
+            self._validate_vector(vector)
+        if not vectors:
+            return []
+        await self.setup()
+        conditions: list = []
+        if filter_active:
+            conditions.append(FieldCondition(key="active", match=MatchValue(value=True)))
+        if embedding_model_version is not None:
+            conditions.append(
+                FieldCondition(
+                    key="embedding_model_version",
+                    match=MatchValue(value=embedding_model_version),
+                )
+            )
+        if preprocess_version is not None:
+            conditions.append(
+                FieldCondition(
+                    key="preprocess_version",
+                    match=MatchValue(value=preprocess_version),
+                )
+            )
+        search_filter = Filter(must=conditions) if conditions else None
+        responses = await self._client.query_batch_points(
+            collection_name=self._collection,
+            requests=[
+                QueryRequest(
+                    query=vector,
+                    filter=search_filter,
+                    limit=top_k,
+                    with_payload=True,
+                    with_vector=False,
+                )
+                for vector in vectors
+            ],
+        )
+        return [
+            [
+                {
+                    "sample_id": point.id,
+                    "score": point.score,
+                    "payload": point.payload,
+                }
+                for point in response.points
+            ]
+            for response in responses
         ]

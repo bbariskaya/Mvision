@@ -974,7 +974,7 @@ performance comparisons without checking applicable NVIDIA license terms.
 - Produces frame watchdog using monotonic clock and interruptible backoff.
 - Consumes installed `nvurisrcbin` reconnect properties proven in Task 1.
 
-- [ ] **Step 1: Write RED state-machine tests**
+- [x] **Step 1: Write RED state-machine tests**
 
 Use a fake monotonic clock and transition sink. Assert:
 
@@ -989,13 +989,13 @@ double stop/close               no duplicate terminal callback/crash
 
 Assert invalid transitions throw internally and emit one sanitized failure.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run `cmake --build build/pipeline --target test_live_lifecycle`.
 
 Expected: target-not-found failure.
 
-- [ ] **Step 3: Implement two-layer recovery**
+- [x] **Step 3: Implement two-layer recovery**
 
 Set verified `nvurisrcbin` reconnect properties. The watchdog checks
 `now_monotonic - last_frame_monotonic`; after stale threshold it emits
@@ -1007,7 +1007,7 @@ Emit completed `reconnect` and `graph_rebuild` native operation records with
 only attempt/reason/outcome allowlisted attributes. Never include source URI,
 host, raw GStreamer error or a span per reconnect poll.
 
-- [ ] **Step 4: Implement complete teardown ownership**
+- [x] **Step 4: Implement complete teardown ownership**
 
 In this order:
 
@@ -1027,23 +1027,23 @@ clear track/assignment maps
 
 Partial-construction failure follows the same idempotent close path.
 
-- [ ] **Step 5: Run lifecycle GREEN**
+- [x] **Step 5: Run lifecycle GREEN**
 
 Run `./build/pipeline/test_live_lifecycle`. Expected: all transition and double
 close tests pass.
 
-- [ ] **Step 6: Fault-inject the real RTSP source**
+- [x] **Step 6: Fault-inject the real RTSP source**
 
 Start fixture, pause/stop it, restart it, then issue stop during reconnect.
 Expected observed sequence contains RECONNECTING and returns ACTIVE after
 source recovery; stop during backoff reaches STOPPED inside shutdown deadline.
 
-- [ ] **Step 7: Repeat teardown**
+- [x] **Step 7: Repeat teardown**
 
 Run 50 start/stop cycles and record process fd/thread count plus GPU memory
 before/after. Any monotonic resource growth blocks the packet.
 
-- [ ] **Step 8: Scope checkpoint**
+- [x] **Step 8: Scope checkpoint**
 
 Run `git diff --check` and record exact source removal/release behavior adapted
 from NVIDIA/Osprey, including local differences.
@@ -1061,7 +1061,7 @@ from NVIDIA/Osprey, including local differences.
 - Writes sanitized diagnostics only to stderr.
 - Owns bounded queues with reserved control-event capacity.
 
-- [ ] **Step 1: Write RED process tests**
+- [x] **Step 1: Write RED process tests**
 
 Launch the worker with pipes. Assert:
 
@@ -1074,13 +1074,13 @@ Launch the worker with pipes. Assert:
 - stdout contains only framed bytes;
 - provided RTSP URI is absent from `/proc/<pid>/cmdline` and captured stderr.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run `cmake --build build/pipeline --target test_live_worker_process`.
 
 Expected: target-not-found failure.
 
-- [ ] **Step 3: Implement queue policy**
+- [x] **Step 3: Implement queue policy**
 
 Use fixed maximum capacities:
 
@@ -1098,20 +1098,20 @@ Native-operation saturation drops telemetry only and increments its metric; it
 cannot consume the 32 reserved control slots.
 Broken stdout pipe triggers controlled FAILED/close, not SIGPIPE termination.
 
-- [ ] **Step 4: Implement command loop and generation checks**
+- [x] **Step 4: Implement command loop and generation checks**
 
 Accept exactly one Start per process. Every later command must match
 camera/run/generation. Stop is always honored when header is valid, including
 during reconnect. Identity assignment is handed to `LivePipeline` without
 touching GStreamer from the reader thread; apply it through the main context.
 
-- [ ] **Step 5: Run GREEN and saturation test**
+- [x] **Step 5: Run GREEN and saturation test**
 
 Run `./build/pipeline/test_live_worker_process`, then inject 10,000 synthetic
 evidence updates with a stalled stdout consumer. Expected: queue remains
 bounded, control stop is delivered, no probe thread blocks.
 
-- [ ] **Step 6: Scope checkpoint**
+- [x] **Step 6: Scope checkpoint**
 
 Run `git diff --check`; inspect process arguments and every diagnostic line for
 URI/credential exposure.
@@ -1135,7 +1135,7 @@ URI/credential exposure.
 - Produces: `LiveSupervisor.process_one_camera(worker_id: str) -> bool`.
 - Consumes: encrypted URI, fenced run lease, strict live protocol.
 
-- [ ] **Step 1: Write RED runner tests**
+- [x] **Step 1: Write RED runner tests**
 
 Use a fake executable to prove:
 
@@ -1148,13 +1148,13 @@ Use a fake executable to prove:
 - exit `0` without Stopped event is failure;
 - non-zero exit maps to sanitized `LIVE_PIPELINE_ERROR`.
 
-- [ ] **Step 2: Write RED supervisor tests**
+- [x] **Step 2: Write RED supervisor tests**
 
 Prove claim, lease renewal, desired-stop, stale lease, crash retry, generation
 increment and API-independent behavior. A stale worker must terminate its child
 and must not update the newer run.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run:
 
@@ -1164,7 +1164,7 @@ pytest backend/tests/unit/test_live_native_runner.py backend/tests/unit/test_liv
 
 Expected: missing modules.
 
-- [ ] **Step 4: Implement runner without secret argv/env**
+- [x] **Step 4: Implement runner without secret argv/env**
 
 Spawn:
 
@@ -1181,7 +1181,7 @@ await asyncio.create_subprocess_exec(
 Write Start after spawn. Use one reader task, one command writer task and one
 redacted stderr drain task. Queue sizes come from settings and are bounded.
 
-- [ ] **Step 5: Implement supervisor transaction boundaries**
+- [x] **Step 5: Implement supervisor transaction boundaries**
 
 Flow is exact:
 
@@ -1198,13 +1198,13 @@ exception -> finish FAILED or release for bounded retry + commit
 always cancel/join lease task and clear plaintext reference
 ```
 
-- [ ] **Step 6: Add worker main**
+- [x] **Step 6: Add worker main**
 
 One loop calls `process_one_camera`, sleeps only when no claim exists, handles
 SIGTERM, and exits after stopping the current child. It does not run inside the
 FastAPI process.
 
-- [ ] **Step 7: Run GREEN**
+- [x] **Step 7: Run GREEN**
 
 Run:
 
@@ -1216,7 +1216,7 @@ mypy backend/app/infrastructure/live backend/app/services/live_supervisor.py bac
 
 Expected: all pass.
 
-- [ ] **Step 8: Scope checkpoint**
+- [x] **Step 8: Scope checkpoint**
 
 Inspect process command, environment, exception messages and logs with a test
 URI. Confirm no plaintext survives outside the Start frame/in-memory secret.
@@ -1242,7 +1242,7 @@ URI. Confirm no plaintext survives outside the Start frame/in-memory secret.
 - Consumes: existing `VideoIdentityVotingService`, `FaceMatcher`, active
   PostgreSQL identity validation and strict event repository.
 
-- [ ] **Step 1: Write RED identity tests using current Friends rules**
+- [x] **Step 1: Write RED identity tests using current Friends rules**
 
 Cases:
 
@@ -1254,12 +1254,20 @@ winner-runner margin below 0.05            Unknown/Pending
 anonymous candidate higher than named      anonymous ignored
 inactive named identity                    Unknown/Pending
 Known(A) then evidence for B                remains Known(A)
+one discontinuous observation              remains current epoch
+two consecutive discontinuous observations reset to new Pending epoch
 ```
 
 Assert `nearest_known_score` is retained for audit even when assignment is
 Unknown.
 
-- [ ] **Step 2: Write RED event/cooldown tests**
+The discontinuity cases are Phase 3-only. They use the configured
+track-reconciliation cosine threshold, discard old-epoch voting evidence, and
+increment `identity_epoch`. Immutability applies within an epoch; a new epoch
+must emit an Unknown reset before it can resolve a fresh Known identity. Do not
+modify the Phase 2 video path in this task.
+
+- [x] **Step 2: Write RED event/cooldown tests**
 
 Prove:
 
@@ -1274,7 +1282,7 @@ Prove:
 - DB failure sends no WebSocket notification and no success assignment;
 - Qdrant failure produces Unknown/Pending, never guessed Known.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run:
 
@@ -1284,7 +1292,7 @@ pytest backend/tests/unit/test_live_identity_service.py backend/tests/unit/test_
 
 Expected: missing services/storage methods.
 
-- [ ] **Step 4: Adapt evidence to the existing voter without duplicating policy**
+- [x] **Step 4: Adapt evidence to the existing voter without duplicating policy**
 
 Construct one `CanonicalVideoTrack` whose `source_templates` contains one
 `SourceTrackTemplate` per accepted live observation:
@@ -1301,7 +1309,7 @@ Pass it to `VideoIdentityVotingService.resolve`. Do not create a second
 threshold/margin algorithm. Snapshot recognition threshold, candidate floor
 and margin into the event quality JSON.
 
-- [ ] **Step 5: Implement transactional event ordering**
+- [x] **Step 5: Implement transactional event ordering**
 
 Exact order:
 
@@ -1319,7 +1327,7 @@ technical event ID and remove the object best-effort. If upload fails, persist
 the event with explicit failed snapshot status only when policy allows a
 snapshotless event; otherwise return a sanitized failure and no false key.
 
-- [ ] **Step 6: Add strict live snapshot storage**
+- [x] **Step 6: Add strict live snapshot storage**
 
 Object key regex is exact:
 
@@ -1332,7 +1340,7 @@ Validate maximum `512 KiB`, JPEG SOI/EOI and SOF dimensions `112x112` without
 decoding the image in Python. Include SHA-256 and event ID metadata. Bucket
 creation remains private and idempotent.
 
-- [ ] **Step 7: Run GREEN**
+- [x] **Step 7: Run GREEN**
 
 Run unit tests, then isolated PostgreSQL/Qdrant/object-storage integration:
 
@@ -1344,14 +1352,14 @@ pytest backend/tests/integration/services/test_live_event_persistence.py -q
 Expected: all pass; object bytes/stat SHA match; no production store name is
 accepted by integration safety checks.
 
-- [ ] **Step 8: Connect supervisor event flow**
+- [x] **Step 8: Connect supervisor event flow**
 
 On `TrackEvidenceEvent`, resolve/persist and enqueue assignment. On
 `TrackExpiredEvent`, finalize stable Unknown if eligible and clear cooldown
 state. Every handler is outside the native stdout reader hot loop through a
 bounded async work queue.
 
-- [ ] **Step 9: Scope checkpoint**
+- [x] **Step 9: Scope checkpoint**
 
 Run existing video voting tests plus `git diff --check`. Confirm image/video
 anonymous lifecycle was not changed and live Unknown does not create a global

@@ -78,6 +78,7 @@ class StartCommand:
     tracker_config_path: str
     output_mount_path: str
     output_udp_port: int
+    output_rtsp_port: int
     latency_ms: int
     reconnect_interval_seconds: int
     reconnect_attempts: int
@@ -89,10 +90,13 @@ class IdentityAssignment:
     header: ProtocolHeader
     tracker_id: int
     assignment_revision: int
+    identity_epoch: int
     identity_state: Literal["known", "unknown"]
     display_name: str | None
     face_id: str | None
     match_score: float | None
+    recognition_threshold: float | None
+    reference_embedding: tuple[float, ...] | None
     decision_sequence: int
 
 
@@ -229,6 +233,7 @@ _MESSAGE_FIELDS = {
         "tracker_config_path",
         "output_mount_path",
         "output_udp_port",
+        "output_rtsp_port",
         "latency_ms",
         "reconnect_interval_seconds",
         "reconnect_attempts",
@@ -237,10 +242,13 @@ _MESSAGE_FIELDS = {
     "identity_assignment": {
         "tracker_id",
         "assignment_revision",
+        "identity_epoch",
         "identity_state",
         "display_name",
         "face_id",
         "match_score",
+        "recognition_threshold",
+        "reference_embedding",
         "decision_sequence",
     },
     "stop": {"reason", "shutdown_deadline_ns"},
@@ -400,6 +408,7 @@ def _payload(message: LiveMessage) -> dict[str, object]:
             tracker_config_path=message.tracker_config_path,
             output_mount_path=message.output_mount_path,
             output_udp_port=message.output_udp_port,
+            output_rtsp_port=message.output_rtsp_port,
             latency_ms=message.latency_ms,
             reconnect_interval_seconds=message.reconnect_interval_seconds,
             reconnect_attempts=message.reconnect_attempts,
@@ -409,10 +418,13 @@ def _payload(message: LiveMessage) -> dict[str, object]:
         payload.update(
             tracker_id=message.tracker_id,
             assignment_revision=message.assignment_revision,
+            identity_epoch=message.identity_epoch,
             identity_state=message.identity_state,
             display_name=message.display_name,
             face_id=message.face_id,
             match_score=message.match_score,
+            recognition_threshold=message.recognition_threshold,
+            reference_embedding=message.reference_embedding,
             decision_sequence=message.decision_sequence,
         )
     elif isinstance(message, StopCommand):
@@ -475,6 +487,18 @@ def encode_message(message: LiveMessage) -> bytes:
     return struct.pack("!I", len(packed)) + packed
 
 
+def _embedding(payload: object) -> tuple[float, ...]:
+    if not isinstance(payload, (list, tuple)):
+        raise ValueError("INVALID_EMBEDDING")
+    embedding = tuple(_finite(value) for value in payload)
+    if len(embedding) != 512:
+        raise ValueError("INVALID_EMBEDDING")
+    norm = math.sqrt(sum(value * value for value in embedding))
+    if not 0.99 <= norm <= 1.01:
+        raise ValueError("INVALID_EMBEDDING_NORM")
+    return embedding
+
+
 def _observation(payload: object) -> LiveObservation:
     if not isinstance(payload, dict):
         raise ValueError("INVALID_PAYLOAD")
@@ -501,12 +525,7 @@ def _observation(payload: object) -> LiveObservation:
     confidences = tuple(_finite(value) for value in payload["landmark_confidences"])
     if len(confidences) != 5:
         raise ValueError("INVALID_LANDMARKS")
-    embedding = tuple(_finite(value) for value in payload["embedding"])
-    if len(embedding) != 512:
-        raise ValueError("INVALID_EMBEDDING")
-    norm = math.sqrt(sum(value * value for value in embedding))
-    if not 0.99 <= norm <= 1.01:
-        raise ValueError("INVALID_EMBEDDING_NORM")
+    embedding = _embedding(payload["embedding"])
     return LiveObservation(
         _integer(payload["timestamp_ns"]),
         bbox,
@@ -546,6 +565,7 @@ def _decode_payload(payload: dict[str, object]) -> LiveMessage:
             _string(payload["tracker_config_path"]),
             _string(payload["output_mount_path"]),
             _integer(payload["output_udp_port"], minimum=1),
+            _integer(payload["output_rtsp_port"], minimum=1),
             _integer(payload["latency_ms"]),
             _integer(payload["reconnect_interval_seconds"]),
             reconnect_attempts,
@@ -559,14 +579,47 @@ def _decode_payload(payload: dict[str, object]) -> LiveMessage:
         if face_id is not None:
             face_id = _uuid(face_id)
         match_score = None if payload["match_score"] is None else _finite(payload["match_score"])
+        recognition_threshold = (
+            None
+            if payload["recognition_threshold"] is None
+            else _finite(payload["recognition_threshold"])
+        )
+        display_name = _optional_string(payload["display_name"])
+        reference_payload = payload["reference_embedding"]
+        if identity_state == "known":
+            if (
+                display_name is None
+                or face_id is None
+                or match_score is None
+                or recognition_threshold is None
+                or reference_payload is None
+            ):
+                raise ValueError("INVALID_IDENTITY_ASSIGNMENT")
+            reference_embedding = _embedding(reference_payload)
+        else:
+            if any(
+                value is not None
+                for value in (
+                    display_name,
+                    face_id,
+                    match_score,
+                    recognition_threshold,
+                    reference_payload,
+                )
+            ):
+                raise ValueError("INVALID_IDENTITY_ASSIGNMENT")
+            reference_embedding = None
         return IdentityAssignment(
             header,
             _integer(payload["tracker_id"]),
             _integer(payload["assignment_revision"], minimum=1),
+            _integer(payload["identity_epoch"], minimum=1),
             cast(Literal["known", "unknown"], identity_state),
-            _optional_string(payload["display_name"]),
+            display_name,
             face_id,
             match_score,
+            recognition_threshold,
+            reference_embedding,
             _integer(payload["decision_sequence"]),
         )
     if header.message_type == "stop":

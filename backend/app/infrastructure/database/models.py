@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     UniqueConstraint,
     func,
@@ -469,7 +470,8 @@ class LiveDetectionEvent(Base):
     run_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False), ForeignKey("live_camera_run.run_id"), nullable=False
     )
-    native_track_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    native_track_id: Mapped[int] = mapped_column(Numeric(20, 0), nullable=False)
+    identity_epoch: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     event_type: Mapped[str] = mapped_column(String(16), nullable=False)
     face_id: Mapped[str | None] = mapped_column(
         UUID(as_uuid=False), ForeignKey("face_identity.face_id")
@@ -503,6 +505,10 @@ class LiveDetectionEvent(Base):
             name="live_detection_event_snapshot_status_check",
         ),
         CheckConstraint(
+            "native_track_id >= 0 AND native_track_id <= 18446744073709551615",
+            name="live_detection_event_native_track_uint64_check",
+        ),
+        CheckConstraint(
             "(event_type = 'known' AND face_id IS NOT NULL AND name_snapshot IS NOT NULL) "
             "OR (event_type = 'unknown' AND face_id IS NULL AND name_snapshot IS NULL)",
             name="live_detection_event_identity_check",
@@ -512,7 +518,11 @@ class LiveDetectionEvent(Base):
             name="live_detection_event_snapshot_pair_check",
         ),
         UniqueConstraint(
-            "run_id", "native_track_id", "event_type", name="uq_live_event_run_track_type"
+            "run_id",
+            "native_track_id",
+            "identity_epoch",
+            "event_type",
+            name="uq_live_event_run_track_epoch_type",
         ),
         Index("ix_live_event_camera_occurred", "camera_id", "occurred_at", "event_id"),
         Index("ix_live_event_face_occurred", "face_id", "occurred_at"),

@@ -3,6 +3,7 @@ import math
 from dataclasses import dataclass, field
 
 from app.config import Settings
+from app.infrastructure.database.models import FaceIdentity
 from app.services.face_matcher import FaceMatch, FaceMatcher
 from app.services.video_tracking_service import CanonicalVideoTrack
 
@@ -17,7 +18,7 @@ class VideoIdentityDecision:
 
 @dataclass
 class _IdentitySupport:
-    identity: object
+    identity: FaceIdentity
     votes: int = 0
     weight: float = 0.0
     weighted_score: float = 0.0
@@ -38,11 +39,12 @@ class VideoIdentityVotingService:
         support: dict[str, _IdentitySupport] = {}
         total_weight = 0.0
         nearest_known_score: float | None = None
-        for template in track.source_templates:
-            candidates = await self._matcher.candidates(
-                list(template.embedding),
-                minimum_score=0.0,
-            )
+        templates = track.source_templates
+        candidate_groups = await self._matcher.candidates_batch(
+            [list(template.embedding) for template in templates],
+            minimum_score=0.0,
+        )
+        for template, candidates in zip(templates, candidate_groups, strict=True):
             known_candidates = [
                 candidate
                 for candidate in candidates

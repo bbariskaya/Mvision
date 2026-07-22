@@ -144,6 +144,7 @@ def _event(camera_id: str, run_id: str, track_id: int, occurred_at: datetime.dat
         camera_id=camera_id,
         run_id=run_id,
         native_track_id=track_id,
+        identity_epoch=1,
         event_type="unknown",
         face_id=None,
         name_snapshot=None,

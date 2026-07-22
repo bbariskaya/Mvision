@@ -205,8 +205,15 @@ void TrackEvidenceBank::expire() {
 
 bool IdentityAssignmentState::apply(const IdentityAssignment& assignment) {
   if (assignment.assignment_revision <= revision_) return false;
+  if (assignment.identity_epoch < identity_epoch_) return false;
   if (assignment.identity_state != "known" && assignment.identity_state != "unknown") {
     return false;
+  }
+  if (assignment.identity_epoch > identity_epoch_) {
+    if (assignment.identity_state != "unknown") return false;
+    identity_epoch_ = assignment.identity_epoch;
+    state_ = TrackIdentityState::Pending;
+    face_id_.reset();
   }
   if (state_ == TrackIdentityState::Known) {
     if (assignment.identity_state != "known" || assignment.face_id != face_id_) return false;

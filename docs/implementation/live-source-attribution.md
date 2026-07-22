@@ -180,3 +180,26 @@ release artifacts, licenses and image digests are intentionally frozen in Task
 13A/14 immediately before adding those dependencies. Design behavior was
 reviewed from official project documentation listed in
 `docs/superpowers/specs/2026-07-21-opentelemetry-observability-design.md`.
+
+## Task 8 Reconnect and Teardown Adaptation
+
+- Osprey contribution: `nvurisrcbin` reconnect-property selection, explicit
+  lifecycle ownership and readiness derived from observed media. Mvision did
+  not copy its dynamic multi-source topology, hosted integrations or teardown.
+- NVIDIA RTSP sample contribution: official `flush_stop` followed by
+  `nvstreammux` requested-pad release ordering. Mvision did not adopt PyDS or
+  sample-level lifecycle behavior.
+- Local implementation: one C++ pipeline thread owns graph state changes; one
+  watchdog thread polls a fake-clock-tested state machine. Rebuild backoff uses
+  a condition variable so stop interrupts it. Teardown rejects new evidence,
+  reaches `GST_STATE_NULL` with a five-second bound, drains already-pending GLib
+  callbacks for at most 100 ms while objects remain alive, removes probes and
+  bus watch, sends `flush_stop`, releases/unrefs the mux pad, joins pipeline and
+  watchdog threads, unreferences the graph once, and clears track state.
+- Local difference: GstRtspServer mount, UDP socket and writer-queue teardown
+  are not yet applicable; those resources enter in Tasks 9 and 12 and must join
+  this same ownership path when implemented.
+- Local evidence: deterministic lifecycle unit tests, six-second plugin
+  recovery, twelve-second full graph rebuild/recovery, stop during reconnect
+  backoff, and 50 same-process cycles with stable descriptor/thread/GPU-memory
+  observations.

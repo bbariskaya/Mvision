@@ -5,10 +5,11 @@ videos, and a single-camera RTSP livestream milestone. The current system
 supports image enrollment/recognition and asynchronous uploaded-video
 recognition. Phase 3 Packets 1-2 add the livestream capability gate, secure
 camera configuration, durable camera/run/event state, camera API contracts,
-strict duplex protocol, and bounded native track evidence state. Packet 3 Task
-7 adds verified native RTSP ingest and the existing inference chain. Reconnect,
-annotated RTSP output, and the required self-hosted OpenTelemetry/Grafana stack
-are not implemented yet.
+strict duplex protocol, and bounded native track evidence state. Packet 3 Tasks
+7-10 add verified native RTSP ingest and inference, two-layer reconnect,
+bounded native worker transport, fenced Python supervision, and live identity
+epochs with durable events/snapshots. Annotated RTSP output and the required self-hosted
+OpenTelemetry/Grafana stack are not implemented yet.
 
 ## Delivery Status
 
@@ -17,7 +18,7 @@ are not implemented yet.
 | Image enrollment and recognition | Implemented | FastAPI to persistent GPU workers over Unix sockets. |
 | Uploaded-video recognition | Implemented | PostgreSQL jobs, native DeepStream worker, track-level identity voting. |
 | Friends full-video validation | Verified | 6,665 frames processed and annotated output generated. |
-| Single-camera RTSP livestream | Packet 3 ingest/inference verified | Runtime/control-plane contracts, cross-language protocol, bounded track evidence, `nvurisrcbin` NVDEC/NVMM ingest, and YOLOv8-Face/NvDCF/ArcFace inference are implemented. Reconnect and annotated output remain. See `docs/superpowers/plans/2026-07-21-single-camera-livestream.md`. |
+| Single-camera RTSP livestream | Packet 4 identity verified | Runtime/control-plane contracts, framed protocol, bounded queues, `nvurisrcbin` NVDEC/NVMM ingest, YOLOv8-Face/NvDCF/ArcFace inference, reconnect, teardown, secret-safe supervision, logical identity epochs, cooldown, durable events, and strict live snapshots are implemented. Annotated output remains. See `docs/superpowers/plans/2026-07-21-single-camera-livestream.md`. |
 | OpenTelemetry and Grafana observability | Required; design approved | Collector, Prometheus, Loki, Tempo, provisioned Grafana dashboards, correlation, privacy, retention, and fault gates are part of milestone acceptance. |
 | Dynamic multi-camera runtime | Later Phase 3 packet | Starts after the single-camera milestone is stable. |
 | Cross-camera body ReID | Later Phase 3 packet | Requires separate topology, timestamp, model, and ReID acceptance. |

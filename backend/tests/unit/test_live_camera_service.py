@@ -16,6 +16,7 @@ class _Session:
     def __init__(self):
         self.commits = 0
         self.rollbacks = 0
+        self.refreshes = 0
 
     async def __aenter__(self):
         return self
@@ -28,6 +29,9 @@ class _Session:
 
     async def rollback(self):
         self.rollbacks += 1
+
+    async def refresh(self, instance):
+        self.refreshes += 1
 
 
 class _SessionFactory:
@@ -151,6 +155,7 @@ async def test_start_changes_only_durable_desired_state() -> None:
     assert result["desired_state"] == "running"
     assert result["runtime_state"] == "STOPPED"
     assert sessions.session.commits == 1
+    assert sessions.session.refreshes == 1
 
 
 @pytest.mark.asyncio

@@ -95,6 +95,7 @@ class LiveCameraService:
                 if camera is None:
                     raise LiveCameraError("Camera not found", "CAMERA_NOT_FOUND", 404)
                 await session.commit()
+                await session.refresh(camera)
             except IntegrityError as exc:
                 await session.rollback()
                 if self._constraint_name(exc) == "uq_live_single_running":
@@ -113,6 +114,7 @@ class LiveCameraService:
             if camera is None:
                 raise LiveCameraError("Camera not found", "CAMERA_NOT_FOUND", 404)
             await session.commit()
+            await session.refresh(camera)
             run = await self._runs.latest_for_camera(session, camera_id)
             return self._camera_snapshot(camera, run)
 

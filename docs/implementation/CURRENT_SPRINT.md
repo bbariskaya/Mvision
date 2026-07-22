@@ -220,8 +220,65 @@ the relevant gates.
   Common optional plugin-scanner warnings are runtime-image inventory noise and
   were unchanged. No candidate improved the baseline, so no `live_*` config was
   created; the existing video configs remain the live contract.
-- Native RTSP reconnect, annotated RTSP output, snapshots and soak:
-  `NOT_PROVEN`.
+- Packet 3 Task 8 two-layer recovery and teardown: `PASS`.
+  - Six-second fixture pause: `ACTIVE -> RECONNECTING -> ACTIVE`, one
+    `reconnect` operation, no graph rebuild and no pipeline error.
+  - Twelve-second fixture pause: `ACTIVE -> RECONNECTING -> ACTIVE`, one
+    `graph_rebuild` plus one `reconnect` operation, no GLib/GStreamer critical
+    and no pipeline error after bounded default-context drain.
+  - Stop during an injected 15-second rebuild backoff:
+    `ACTIVE -> RECONNECTING -> STOPPING -> STOPPED`; the condition-variable
+    wait was interrupted and shutdown completed inside the smoke deadline.
+  - Fifty same-process start/detect/recognize/stop cycles: all passed and
+    settled after every cycle at `42` file descriptors, `70` process threads
+   and `7,108,231,168` reported device-used GPU bytes. This is a lifecycle
+   leak gate, not a throughput or long-duration performance benchmark.
+- Packet 3 Task 9 native worker process and bounded writer: `PASS`.
+  - The worker remains idle until Start, keeps the RTSP URI out of argv and
+    sanitized stderr, and reserves stdout exclusively for framed MessagePack.
+  - Malformed and truncated frames produce a controlled non-zero failure;
+    broken stdout is handled without SIGPIPE termination.
+  - Stop and SIGTERM both follow the pipeline close path, including
+    `STOPPING -> STOPPED`, and identity assignments are applied on the GLib
+    main context with stale revisions rejected without terminating the worker.
+  - A 10,000-update saturation test remained bounded at 256 evidence keys, one
+    replaceable metric, 64 native-operation records, 32 reserved control slots,
+    and the latest assignment per tracker. This proves queue policy and
+    non-blocking producer behavior, not Python supervision or end-to-end load.
+- Packet 4 Task 10 Python runner, lease supervisor and worker main: `PASS`.
+  - The native child argv is exactly executable plus GPU ID; the plaintext URI
+    is transferred only in the framed Start command and native stderr is
+    redacted before logging.
+  - Ordered stdout events, bounded/coalesced assignment commands, desired Stop,
+    success-without-Stopped rejection, non-zero exit sanitization and SIGTERM
+    worker shutdown behavior are covered by process/unit tests.
+  - Camera claim, committed STARTING run, in-memory decrypt, fenced state and
+    metrics updates, lease renewal/loss, crash-to-FAILED recovery and next-run
+    generation behavior are covered independently of the FastAPI process.
+  - The focused Task 10 suite passed `12` tests; the expanded existing-live
+    regression passed `79` tests. Ruff, mypy and `git diff --check` passed.
+    This does not yet prove real database/native-worker integration or identity
+    resolution.
+- Packet 4 Task 11 live identity, cooldown and durable events: `PASS`.
+  - Live evidence adapts to the existing named-only video voter without a
+    duplicate threshold/margin algorithm; Unknown retains nearest-known cosine
+    for audit and never creates a global anonymous identity.
+  - Phase 3 logical identity epochs prevent native tracker reuse from carrying
+    a previous Known label onto a different face. One discontinuous observation
+    is ignored as noise; two start a clean Pending epoch, discard old voting
+    evidence, and explicitly reset native assignment state. Phase 2 was not
+    modified.
+  - Known/Unknown event idempotency, face cooldown, delayed Unknown expiry,
+    snapshot failure semantics, database failure cleanup, notification ordering
+    and camera/run/generation fencing are covered by unit tests.
+  - Live snapshots enforce the exact UUID key, JPEG SOI/EOI, 112x112 SOF,
+    512 KiB cap, private live bucket, SHA-256 and event metadata. Isolated MinIO
+    round-trip and PostgreSQL epoch persistence passed.
+  - Final scoped evidence: `84` Python tests, `2` isolated service integration
+    tests, `8` isolated repository tests, cross-language parity, native
+    protocol/track-state/worker-process tests, Ruff, mypy and
+    `git diff --check` all passed.
+- Annotated RTSP output, snapshots and 24-hour soak: `NOT_PROVEN`.
 - OpenTelemetry trace continuity, telemetry privacy/cardinality, Collector,
   Prometheus, Loki, Tempo, Grafana dashboards/correlations, retention,
   fault-isolation and overhead A/B: `DESIGN_APPROVED`, implementation

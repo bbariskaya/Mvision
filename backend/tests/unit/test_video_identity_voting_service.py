@@ -36,9 +36,19 @@ def _track(values: list[float]) -> CanonicalVideoTrack:
 class _Matcher:
     def __init__(self, responses):
         self.responses = responses
+        self.candidates_calls = 0
+        self.candidates_batch_calls = 0
 
     async def candidates(self, embedding, *, minimum_score):
+        self.candidates_calls += 1
         return [item for item in self.responses[embedding[0]] if item.score >= minimum_score]
+
+    async def candidates_batch(self, embeddings, *, minimum_score):
+        self.candidates_batch_calls += 1
+        return [
+            [item for item in self.responses[embedding[0]] if item.score >= minimum_score]
+            for embedding in embeddings
+        ]
 
 
 @pytest.mark.asyncio
@@ -62,6 +72,8 @@ async def test_two_moderate_votes_resolve_identity():
     assert decision.match.identity.face_id == "face-a"
     assert decision.match.sample_id == "s1"
     assert decision.score == pytest.approx(0.81)
+    assert matcher.candidates_batch_calls == 1
+    assert matcher.candidates_calls == 0
 
 
 @pytest.mark.asyncio

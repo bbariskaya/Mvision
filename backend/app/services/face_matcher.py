@@ -40,25 +40,33 @@ class FaceMatcher:
     async def candidates(
         self, embedding: list[float], *, minimum_score: float
     ) -> list[FaceMatch]:
-        candidates = await self._qdrant.search(
-            embedding,
+        return (await self.candidates_batch([embedding], minimum_score=minimum_score))[0]
+
+    async def candidates_batch(
+        self, embeddings: list[list[float]], *, minimum_score: float
+    ) -> list[list[FaceMatch]]:
+        candidate_groups = await self._qdrant.search_batch(
+            embeddings,
             top_k=10,
             embedding_model_version=self._settings.model_version,
             preprocess_version=self._settings.preprocess_version,
         )
-        matches: list[FaceMatch] = []
+        grouped_matches: list[list[FaceMatch]] = []
         async with AsyncSessionLocal() as session:
-            for candidate in candidates:
-                payload = candidate.get("payload") or {}
-                face_id = payload.get("face_id")
-                if not face_id:
-                    continue
-                identity = await self._identity_repo.get_active_by_id(session, str(face_id))
-                if identity is None:
-                    continue
-                score = min(1.0, max(0.0, float(candidate["score"])))
-                if score >= minimum_score:
-                    matches.append(
-                        FaceMatch(identity, str(candidate["sample_id"]), score)
-                    )
-        return matches
+            for candidates in candidate_groups:
+                matches: list[FaceMatch] = []
+                for candidate in candidates:
+                    payload = candidate.get("payload") or {}
+                    face_id = payload.get("face_id")
+                    if not face_id:
+                        continue
+                    identity = await self._identity_repo.get_active_by_id(session, str(face_id))
+                    if identity is None:
+                        continue
+                    score = min(1.0, max(0.0, float(candidate["score"])))
+                    if score >= minimum_score:
+                        matches.append(
+                            FaceMatch(identity, str(candidate["sample_id"]), score)
+                        )
+                grouped_matches.append(matches)
+        return grouped_matches

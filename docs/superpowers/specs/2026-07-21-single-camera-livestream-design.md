@@ -560,6 +560,22 @@ Native bank:
 - Expired track state, assignment map ve snapshots temizlenir.
 - Probe only computes/copies compact metadata and attempts non-blocking queue.
 
+Logical face epochs prevent native tracker reuse from carrying one person's
+identity onto another person:
+
+- Python keeps an `identity_epoch` per `(run_id, tracker_id)`, starting at `1`.
+- Newly observed embeddings are compared with the current epoch's accepted
+  face evidence using the configured track-reconciliation cosine threshold.
+- One discontinuous observation is treated as noise. Two consecutive
+  discontinuous accepted observations start a new logical face epoch.
+- Starting a new epoch clears prior voting evidence and sends a higher-epoch
+  Unknown assignment before fresh recognition. Native assignment state accepts
+  a Known reset only when `identity_epoch` increases; revision and generation
+  fencing still apply.
+- Evidence already seen in an older epoch is never voted in the new epoch even
+  if the native bounded evidence event still contains it.
+- This safeguard does not merge identities or alter Phase 2 video behavior.
+
 ## Identity Decision
 
 Existing `VideoIdentityVotingService` semantigi korunur ve live input adapter
@@ -596,6 +612,9 @@ Track immutability:
   olabilir, durable Unknown event henuz yazilmaz.
 - `Known(A) -> Known(B)` forbidden.
 - `Known -> Unknown` forbidden.
+- A higher `identity_epoch` is a new logical face under a reused tracker ID, not
+  a `Known(A) -> Known(B)` transition. It first resets to Unknown/Pending and
+  requires fresh minimum evidence before Known can be assigned.
 - Known identity DB'de inactive olursa current track label degismez; sonraki
   yeni track candidate validation'da reddedilir.
 

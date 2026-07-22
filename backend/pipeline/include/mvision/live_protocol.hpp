@@ -41,6 +41,7 @@ struct StartCommand {
   std::string tracker_config_path;
   std::string output_mount_path;
   std::uint16_t output_udp_port;
+  std::uint16_t output_rtsp_port;
   std::uint32_t latency_ms;
   std::uint32_t reconnect_interval_seconds;
   std::int32_t reconnect_attempts;
@@ -51,10 +52,13 @@ struct IdentityAssignment {
   ProtocolHeader header;
   std::uint64_t tracker_id;
   std::uint64_t assignment_revision;
+  std::uint64_t identity_epoch;
   std::string identity_state;
   std::optional<std::string> display_name;
   std::optional<std::string> face_id;
   std::optional<float> match_score;
+  std::optional<float> recognition_threshold;
+  std::optional<std::array<float, 512>> reference_embedding;
   std::uint64_t decision_sequence;
 };
 

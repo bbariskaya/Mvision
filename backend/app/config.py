@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     minio_secret_key: SecretStr = Field(default=SecretStr("minioadmin"))
     minio_bucket_faces: str = Field(default="mergenvision-faces")
     minio_bucket_videos: str = Field(default="mergenvision-videos")
+    minio_bucket_live: str = Field(default="mergenvision-live")
     minio_secure: bool = False
 
     model_version: str = "arcface_r50_webface4m_v1"
@@ -84,6 +85,18 @@ class Settings(BaseSettings):
     live_worker_poll_seconds: float = 1.0
     live_worker_lease_seconds: int = 30
     live_native_executable: str = "/workspace/build/pipeline/mvision_live_worker"
+    live_assignment_queue_capacity: int = 256
+    live_identity_work_queue_capacity: int = 64
+    live_tracker_config_path: str = "/workspace/configs/video_tracker_nvdcf.yml"
+    live_pgie_config_path: str = "/workspace/configs/video_pgie_yolov8_face.txt"
+    live_preprocess_config_path: str = "/workspace/configs/video_preprocess_arcface.txt"
+    live_sgie_config_path: str = "/workspace/configs/video_sgie_arcface_r50.txt"
+    live_latency_ms: int = 200
+    live_reconnect_interval_seconds: int = 10
+    live_reconnect_attempts: int = -1
+    live_frame_timeout_ns: int = 5_000_000_000
+    live_known_cooldown_seconds: float = 30.0
+    live_unknown_min_dwell_seconds: float = 0.5
     live_rtsp_output_host: str = "localhost"
     live_rtsp_output_port: int = 8554
     live_rtp_udp_port: int = 5400

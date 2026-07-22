@@ -150,17 +150,27 @@ void test_expire_releases_observation_and_jpeg_capacity() {
 
 mvision::IdentityAssignment assignment(std::uint64_t revision,
                                        std::string state,
-                                       const char* face_id) {
+                                       const char* face_id,
+                                       std::uint64_t identity_epoch = 1) {
+  std::optional<std::array<float, 512>> reference;
+  if (face_id != nullptr) {
+    std::array<float, 512> value{};
+    value[0] = 1.0F;
+    reference = value;
+  }
   return {assignment_header(revision),
           42,
           revision,
+          identity_epoch,
           std::move(state),
           face_id == nullptr ? std::nullopt
                              : std::optional<std::string>("Ada"),
           face_id == nullptr ? std::nullopt
                              : std::optional<std::string>(face_id),
-          face_id == nullptr ? std::nullopt : std::optional<float>(0.9F),
-          revision};
+           face_id == nullptr ? std::nullopt : std::optional<float>(0.9F),
+           face_id == nullptr ? std::nullopt : std::optional<float>(0.8F),
+           reference,
+           revision};
 }
 
 void test_identity_assignment_is_revisioned_and_known_is_immutable() {
@@ -172,6 +182,11 @@ void test_identity_assignment_is_revisioned_and_known_is_immutable() {
   assert(!state.apply(assignment(3, "unknown", nullptr)));
   assert(!state.apply(assignment(1, "known", kFaceA)));
   assert(state.face_id() == std::optional<std::string>(kFaceA));
+  assert(state.apply(assignment(4, "unknown", nullptr, 2)));
+  assert(state.state() == mvision::TrackIdentityState::Unknown);
+  assert(state.apply(assignment(5, "known", kFaceB, 2)));
+  assert(!state.apply(assignment(6, "known", kFaceA, 1)));
+  assert(state.face_id() == std::optional<std::string>(kFaceB));
 }
 
 void run_stress() {

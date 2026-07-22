@@ -20,7 +20,12 @@ class LiveEventRepository:
             insert(LiveDetectionEvent)
             .values(**values)
             .on_conflict_do_nothing(
-                index_elements=["run_id", "native_track_id", "event_type"]
+                index_elements=[
+                    "run_id",
+                    "native_track_id",
+                    "identity_epoch",
+                    "event_type",
+                ]
             )
             .returning(LiveDetectionEvent.event_id)
         )
@@ -32,6 +37,7 @@ class LiveEventRepository:
         existing_stmt = select(LiveDetectionEvent).where(
             LiveDetectionEvent.run_id == event.run_id,
             LiveDetectionEvent.native_track_id == event.native_track_id,
+            LiveDetectionEvent.identity_epoch == event.identity_epoch,
             LiveDetectionEvent.event_type == event.event_type,
         )
         existing = (await session.execute(existing_stmt)).scalar_one()
