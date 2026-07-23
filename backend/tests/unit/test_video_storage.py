@@ -65,6 +65,16 @@ async def test_read_video_range_releases_minio_response():
 
 
 @pytest.mark.asyncio
+async def test_video_key_accepts_safe_configured_prefix():
+    adapter = _adapter()
+    key = "archive/input/019f8000-0000-7000-8000-000000000001/source"
+
+    await adapter.read_video_range(key, offset=0, length=5)
+
+    assert adapter._client.get_args == ("mergenvision-videos", key, 0, 5)
+
+
+@pytest.mark.asyncio
 async def test_upload_video_uses_hash_metadata(tmp_path: Path):
     adapter = _adapter()
     path = tmp_path / "clip.mp4"
@@ -83,3 +93,19 @@ async def test_video_key_rejects_path_traversal():
 
     with pytest.raises(ObjectValidationError):
         await adapter.read_video_range("videos/../../secret", offset=0, length=5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "key",
+    [
+        "/archive/019f8000-0000-7000-8000-000000000001/source",
+        "archive//019f8000-0000-7000-8000-000000000001/source",
+        "archive/not-a-uuid/source",
+        "archive/019f8000-0000-7000-8000-000000000001/not-source",
+        "archive/in put/019f8000-0000-7000-8000-000000000001/source",
+    ],
+)
+async def test_video_key_rejects_unsafe_or_malformed_components(key):
+    with pytest.raises(ObjectValidationError):
+        await _adapter().read_video_range(key, offset=0, length=5)

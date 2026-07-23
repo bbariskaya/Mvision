@@ -35,11 +35,17 @@ class ProcessRecordRepository:
         session: AsyncSession,
         process_id: str,
         face_count: int,
+        details: dict | None = None,
     ) -> ProcessRecord | None:
         stmt = (
             update(ProcessRecord)
             .where(ProcessRecord.process_id == process_id)
-            .values(status="completed", face_count=face_count, completed_at=func.now())
+            .values(
+                status="completed",
+                face_count=face_count,
+                details=details or {},
+                completed_at=func.now(),
+            )
             .returning(ProcessRecord)
         )
         result = await session.execute(stmt)

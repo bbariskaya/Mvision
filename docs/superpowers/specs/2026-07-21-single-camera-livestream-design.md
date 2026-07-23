@@ -2,11 +2,17 @@
 
 ## Durum
 
+Implemented historical single-camera baseline. The target API, default frame
+JSON, persistent anonymous identity, MediaMTX ingress, optional outputs, and
+multi-camera direction are now governed by
+`2026-07-22-live-analytics-platform-roadmap-design.md`. The one-camera limit,
+Known/Unknown-only event model, mandatory annotated RTSP branch, and absence of
+global anonymous identity in this document are not future requirements.
+
 Kullanici 2026-07-21 tarihinde Phase 2'nin tamamlandigini ve sonraki urun
-hareketinin livestream oldugunu belirledi. Bu belge ilk teslim edilebilir
-Phase 3 milestone'unu tanimlar: tek aktif RTSP kamera, guvenilir lifecycle,
-yuz tanima, durable detection event'leri, health/metrics ve annotate RTSP
-cikisi.
+hareketinin livestream oldugunu belirledi. Bu belge uygulanan ilk milestone'u
+tanimlar: tek aktif RTSP kamera, guvenilir lifecycle, yuz tanima, durable
+detection event'leri, health/metrics ve annotate RTSP cikisi.
 
 Bu belge implementation source'u degildir. Mevcut davranis ile hedef davranisi
 ayirir. Implementation adimlari

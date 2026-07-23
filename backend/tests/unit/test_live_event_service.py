@@ -19,7 +19,16 @@ from tests.unit.test_live_identity_service import (
 
 def _header(message_type: str, sequence: int) -> ProtocolHeader:
     return ProtocolHeader(
-        1, message_type, CAMERA_ID, RUN_ID, 1, sequence, TRACEPARENT, None
+        2,
+        message_type,
+        CAMERA_ID,
+        CAMERA_ID,
+        RUN_ID,
+        1,
+        1,
+        sequence,
+        TRACEPARENT,
+        None,
     )
 
 
@@ -133,9 +142,10 @@ def _service(events=None, storage=None, notifier=None):
 
 
 def _jpeg(width=112, height=112):
-    sof = bytes(
-        [0xFF, 0xC0, 0x00, 0x11, 0x08, height >> 8, height & 0xFF, width >> 8, width & 0xFF]
-    ) + b"\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00"
+    sof = (
+        bytes([0xFF, 0xC0, 0x00, 0x11, 0x08, height >> 8, height & 0xFF, width >> 8, width & 0xFF])
+        + b"\x03\x01\x11\x00\x02\x11\x00\x03\x11\x00"
+    )
     return b"\xff\xd8" + sof + b"\xff\xd9"
 
 
@@ -207,12 +217,8 @@ async def test_known_decision_persists_one_snapshot_event_and_assignment() -> No
     service, sessions = _service(events, storage, notifier)
     evidence = _event((1.0, 0.0))
 
-    assignments = await service.accept_decision(
-        CAMERA_ID, RUN_ID, 1, evidence, _known()
-    )
-    retry = await service.accept_decision(
-        CAMERA_ID, RUN_ID, 1, evidence, _known(transition="none")
-    )
+    assignments = await service.accept_decision(CAMERA_ID, RUN_ID, 1, evidence, _known())
+    retry = await service.accept_decision(CAMERA_ID, RUN_ID, 1, evidence, _known(transition="none"))
 
     assert assignments[0].identity_state == "known"
     assert assignments[0].face_id == _known().match.identity.face_id
@@ -233,9 +239,7 @@ async def test_same_face_inside_cooldown_suppresses_fragment_event() -> None:
     await service.accept_decision(CAMERA_ID, RUN_ID, 1, _event((1.0, 0.0)), _known())
     fragment = _event((1.0, 0.0))
     object.__setattr__(fragment, "tracker_id", 43)
-    assignments = await service.accept_decision(
-        CAMERA_ID, RUN_ID, 1, fragment, _known()
-    )
+    assignments = await service.accept_decision(CAMERA_ID, RUN_ID, 1, fragment, _known())
 
     assert assignments[0].identity_state == "known"
     assert len(events.rows) == 1
@@ -274,9 +278,7 @@ async def test_pending_unknown_is_persisted_only_after_track_expiry() -> None:
     service, _ = _service(events)
     evidence = _event((1.0, 0.0))
 
-    assignments = await service.accept_decision(
-        CAMERA_ID, RUN_ID, 1, evidence, _pending()
-    )
+    assignments = await service.accept_decision(CAMERA_ID, RUN_ID, 1, evidence, _pending())
     assert assignments == ()
     assert events.rows == {}
 
@@ -301,9 +303,7 @@ async def test_snapshot_failure_records_failed_without_false_object_key() -> Non
     events = _Events()
     service, _ = _service(events, _Storage(fail=True))
 
-    assignments = await service.accept_decision(
-        CAMERA_ID, RUN_ID, 1, _event((1.0, 0.0)), _known()
-    )
+    assignments = await service.accept_decision(CAMERA_ID, RUN_ID, 1, _event((1.0, 0.0)), _known())
 
     assert assignments[0].identity_state == "known"
     row = next(iter(events.rows.values()))
@@ -319,9 +319,7 @@ async def test_database_failure_notifies_nobody_and_returns_no_assignment() -> N
     service, _ = _service(_Events(fail=True), storage, notifier)
 
     with pytest.raises(RuntimeError, match="database unavailable"):
-        await service.accept_decision(
-            CAMERA_ID, RUN_ID, 1, _event((1.0, 0.0)), _known()
-        )
+        await service.accept_decision(CAMERA_ID, RUN_ID, 1, _event((1.0, 0.0)), _known())
 
     assert notifier.events == []
     assert len(storage.deleted) == 1
@@ -334,9 +332,7 @@ async def test_mismatched_generation_is_rejected_before_storage_or_database() ->
     service, _ = _service(events, storage)
 
     with pytest.raises(ValueError, match="STALE_LIVE_EVIDENCE"):
-        await service.accept_decision(
-            CAMERA_ID, RUN_ID, 2, _event((1.0, 0.0)), _known()
-        )
+        await service.accept_decision(CAMERA_ID, RUN_ID, 2, _event((1.0, 0.0)), _known())
 
     assert storage.uploads == []
     assert events.rows == {}

@@ -36,7 +36,9 @@ mvision::ProtocolHeader fallback_header(std::string type, std::uint64_t sequence
   return {mvision::kLiveProtocolVersion,
           std::move(type),
           "00000000-0000-0000-0000-000000000001",
+          "00000000-0000-0000-0000-000000000001",
           "00000000-0000-0000-0000-000000000002",
+          1,
           1,
           sequence,
           "00-00000000000000000000000000000001-0000000000000001-00",
@@ -203,9 +205,11 @@ int main(int argc, char** argv) {
             throw mvision::LiveProtocolError("INVALID_START");
           }
           start = *command;
-          context = mvision::DecodeContext{command->header.camera_id,
+          context = mvision::DecodeContext{command->header.session_id,
+                                           command->header.camera_id,
                                            command->header.run_id,
-                                           command->header.generation, {}};
+                                           command->header.generation,
+                                           command->header.runtime_attempt, {}};
           events.push(mvision::HelloEvent{event_header("hello"), "mvision-live-worker",
                                           "1.24.2", "9.0.0"});
           mvision::LivePipelineCallbacks callbacks;
@@ -253,6 +257,7 @@ int main(int argc, char** argv) {
           options.tracker_config_path = command->tracker_config_path;
           options.preprocess_config_path = command->preprocess_config_path;
           options.sgie_config_path = command->sgie_config_path;
+          options.sample_every_n = command->sample_every_n;
           options.latency_ms = command->latency_ms;
           options.reconnect_interval_seconds = command->reconnect_interval_seconds;
           options.reconnect_attempts = command->reconnect_attempts;

@@ -49,10 +49,12 @@ def _event(*embeddings: tuple[float, ...], revision: int = 1) -> TrackEvidenceEv
     )
     return TrackEvidenceEvent(
         ProtocolHeader(
-            1,
+            2,
             "track_evidence",
             CAMERA_ID,
+            CAMERA_ID,
             RUN_ID,
+            1,
             1,
             revision,
             TRACEPARENT,
@@ -73,9 +75,7 @@ class _Matcher:
 
     async def candidates(self, embedding, *, minimum_score):
         return [
-            item
-            for item in self.responses.get(tuple(embedding), ())
-            if item.score >= minimum_score
+            item for item in self.responses.get(tuple(embedding), ()) if item.score >= minimum_score
         ]
 
     async def candidates_batch(self, embeddings, *, minimum_score):
@@ -102,7 +102,11 @@ def _service(responses, **overrides) -> LiveIdentityService:
         video_track_vote_min_margin=0.05,
         video_track_reconciliation_threshold=0.6,
     )
-    voter = VideoIdentityVotingService(settings, _Matcher(responses))
+    voter = VideoIdentityVotingService(
+        settings,
+        _Matcher(responses),
+        eligible_lifecycle_statuses=frozenset({"known"}),
+    )
     return LiveIdentityService(settings, voter, _Vectors())
 
 
@@ -111,9 +115,9 @@ async def test_one_strong_named_vote_is_known() -> None:
     face = _identity("face-a")
     embedding = (1.0, 0.0)
 
-    decision = await _service(
-        {embedding: [FaceMatch(face, "sample-a", 0.91)]}
-    ).resolve(_event(embedding))
+    decision = await _service({embedding: [FaceMatch(face, "sample-a", 0.91)]}).resolve(
+        _event(embedding)
+    )
 
     assert decision.identity_state == "known"
     assert decision.match is not None
@@ -145,9 +149,9 @@ async def test_below_threshold_or_ambiguous_winner_remains_pending() -> None:
     second = _identity("face-b")
     embedding = (1.0, 0.0)
 
-    below = await _service(
-        {embedding: [FaceMatch(first, "sample-a", 0.79)]}
-    ).resolve(_event(embedding))
+    below = await _service({embedding: [FaceMatch(first, "sample-a", 0.79)]}).resolve(
+        _event(embedding)
+    )
     ambiguous = await _service(
         {
             embedding: [

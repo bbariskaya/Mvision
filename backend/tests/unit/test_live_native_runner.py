@@ -26,7 +26,16 @@ SECRET_URI = "rtsp://admin:secret@camera.invalid/live"
 
 def _header(message_type: str, sequence: int) -> ProtocolHeader:
     return ProtocolHeader(
-        1, message_type, CAMERA_ID, RUN_ID, 1, sequence, TRACEPARENT, None
+        2,
+        message_type,
+        CAMERA_ID,
+        CAMERA_ID,
+        RUN_ID,
+        1,
+        1,
+        sequence,
+        TRACEPARENT,
+        None,
     )
 
 
@@ -42,10 +51,19 @@ def _start() -> StartCommand:
         "/live/camera",
         5400,
         8554,
+        1,
+        "recognize",
+        1,
+        0.5,
+        0.62,
+        0.05,
+        1_500_000_000,
         200,
         10,
         -1,
         5_000_000_000,
+        False,
+        False,
     )
 
 
@@ -94,14 +112,16 @@ def read_frame():
 
 def emit(message_type, sequence, **fields):
     payload = {{
-        "protocol_version": 1,
+        "protocol_version": start["protocol_version"],
         "message_type": message_type,
-        "camera_id": "{CAMERA_ID}",
-        "run_id": "{RUN_ID}",
-        "generation": 1,
+        "session_id": start["session_id"],
+        "camera_id": start["camera_id"],
+        "run_id": start["run_id"],
+        "generation": start["generation"],
+        "runtime_attempt": start["runtime_attempt"],
         "sequence": sequence,
-        "traceparent": "{TRACEPARENT}",
-        "tracestate": None,
+        "traceparent": start["traceparent"],
+        "tracestate": start["tracestate"],
         **fields,
     }}
     data = msgpack.packb(payload, use_bin_type=True)
@@ -123,9 +143,7 @@ async def test_runner_uses_secret_free_argv_and_streams_ordered_events(
     tmp_path: Path,
 ) -> None:
     record_path = tmp_path / "record.json"
-    executable = _executable(
-        tmp_path / "worker.py", _worker_script(record_path)
-    )
+    executable = _executable(tmp_path / "worker.py", _worker_script(record_path))
     events = []
 
     result = await NativeLiveRunner(_settings(executable)).run(

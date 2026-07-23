@@ -66,9 +66,7 @@ def test_runtime_exports_resource_parent_timestamps_and_correlated_logs() -> Non
     assert exported_span.start_time == start_time
     assert exported_span.parent is not None
     assert exported_span.parent.span_id == int("2" * 16, 16)
-    assert exported_span.attributes == {
-        "camera_id": "019b0000-0000-7000-8000-000000000001"
-    }
+    assert exported_span.attributes == {"camera_id": "019b0000-0000-7000-8000-000000000001"}
     assert exported_span.resource.attributes["service.name"] == "mvision-test"
     assert exported_span.resource.attributes["service.version"] == "9.8.7"
     assert exported_span.resource.attributes["deployment.environment"] == "test"
@@ -189,8 +187,14 @@ async def test_api_lifespan_initializes_dependencies_then_shuts_down_telemetry(
             assert timeout_millis == 3_000
             events.append("telemetry.shutdown")
 
+    class _MediaClient:
+        async def aclose(self) -> None:
+            events.append("mediamtx.close")
+
     container = SimpleNamespace(
-        minio=_Dependency("minio"), qdrant=_Dependency("qdrant")
+        minio=_Dependency("minio"),
+        qdrant=_Dependency("qdrant"),
+        mediamtx_client=_MediaClient(),
     )
     monkeypatch.setattr(main_module, "get_container", lambda *args: container)
     test_app = FastAPI()
@@ -199,7 +203,13 @@ async def test_api_lifespan_initializes_dependencies_then_shuts_down_telemetry(
     async with main_module.lifespan(test_app):
         events.append("serving")
 
-    assert events == ["minio", "qdrant", "serving", "telemetry.shutdown"]
+    assert events == [
+        "minio",
+        "qdrant",
+        "serving",
+        "mediamtx.close",
+        "telemetry.shutdown",
+    ]
 
 
 @pytest.mark.asyncio

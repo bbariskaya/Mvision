@@ -28,9 +28,7 @@ class SessionFactory(Protocol):
 
 
 class LiveSnapshotStorage(Protocol):
-    async def upload_live_snapshot(
-        self, object_key: str, data: bytes, event_id: str
-    ) -> Any: ...
+    async def upload_live_snapshot(self, object_key: str, data: bytes, event_id: str) -> Any: ...
 
     async def delete_live_snapshot(self, object_key: str) -> None: ...
 
@@ -45,9 +43,7 @@ class InMemoryLiveNotifier:
         self._subscribers: set[asyncio.Queue[LiveDetectionEvent]] = set()
 
     def subscribe(self) -> asyncio.Queue[LiveDetectionEvent]:
-        queue: asyncio.Queue[LiveDetectionEvent] = asyncio.Queue(
-            maxsize=self._queue_capacity
-        )
+        queue: asyncio.Queue[LiveDetectionEvent] = asyncio.Queue(maxsize=self._queue_capacity)
         self._subscribers.add(queue)
         return queue
 
@@ -170,9 +166,7 @@ class LiveEventService:
             except Exception:
                 snapshot_status = "failed"
                 snapshot_span.set_attribute("error_code", "SNAPSHOT_UPLOAD_FAILED")
-                snapshot_span.set_status(
-                    Status(StatusCode.ERROR, "SNAPSHOT_UPLOAD_FAILED")
-                )
+                snapshot_span.set_status(Status(StatusCode.ERROR, "SNAPSHOT_UPLOAD_FAILED"))
 
         best = max(evidence.observations, key=lambda item: item.quality_score)
         match = decision.match
@@ -186,9 +180,7 @@ class LiveEventService:
             event_type=event_type,
             face_id=str(identity.face_id) if identity is not None else None,
             name_snapshot=str(identity.name) if identity is not None else None,
-            identity_version_snapshot=(
-                int(identity.version) if identity is not None else None
-            ),
+            identity_version_snapshot=(int(identity.version) if identity is not None else None),
             match_score=match.score if match is not None else None,
             nearest_known_score=decision.nearest_known_score,
             detector_confidence=best.detector_confidence,
@@ -216,9 +208,7 @@ class LiveEventService:
                     await session.commit()
             except Exception:
                 commit_span.set_attribute("error_code", "LIVE_EVENT_COMMIT_FAILED")
-                commit_span.set_status(
-                    Status(StatusCode.ERROR, "LIVE_EVENT_COMMIT_FAILED")
-                )
+                commit_span.set_status(Status(StatusCode.ERROR, "LIVE_EVENT_COMMIT_FAILED"))
                 if uploaded:
                     try:
                         await self._storage.delete_live_snapshot(object_key)
@@ -234,9 +224,7 @@ class LiveEventService:
                 await self._notifier.publish(persisted)
             except Exception:
                 notification_span.set_attribute("error_code", "LIVE_NOTIFICATION_FAILED")
-                notification_span.set_status(
-                    Status(StatusCode.ERROR, "LIVE_NOTIFICATION_FAILED")
-                )
+                notification_span.set_status(Status(StatusCode.ERROR, "LIVE_NOTIFICATION_FAILED"))
         return persisted
 
     def _assignment(
@@ -254,9 +242,11 @@ class LiveEventService:
             ProtocolHeader(
                 evidence.header.protocol_version,
                 "identity_assignment",
+                evidence.header.session_id,
                 evidence.header.camera_id,
                 evidence.header.run_id,
                 evidence.header.generation,
+                evidence.header.runtime_attempt,
                 evidence.header.sequence + revision,
                 evidence.header.traceparent,
                 evidence.header.tracestate,
@@ -268,11 +258,7 @@ class LiveEventService:
             str(identity.name) if identity is not None else None,
             str(identity.face_id) if identity is not None else None,
             match.score if match is not None else None,
-            (
-                decision.quality["recognition_threshold"]
-                if match is not None
-                else None
-            ),
+            (decision.quality["recognition_threshold"] if match is not None else None),
             decision.reference_embedding if match is not None else None,
             evidence.evidence_revision,
         )

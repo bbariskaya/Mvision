@@ -59,8 +59,10 @@ async def test_two_moderate_votes_resolve_identity():
     )
     voter = VideoIdentityVotingService(
         Settings(
-            recognition_threshold=0.55,
+            recognition_threshold=0.90,
             video_track_vote_candidate_floor=0.70,
+            video_track_vote_min_count=2,
+            video_track_vote_min_support_ratio=0.60,
             video_track_vote_min_margin=0.05,
         ),
         matcher,
@@ -85,6 +87,44 @@ async def test_one_strong_vote_resolves_identity():
     )
 
     assert (await voter.resolve(_track([1.0, 2.0]))).match is not None
+
+
+@pytest.mark.asyncio
+async def test_strong_anonymous_match_reuses_existing_identity_below_known_threshold():
+    anonymous = _anonymous("anonymous-face")
+    voter = VideoIdentityVotingService(
+        Settings(
+            recognition_threshold=0.80,
+            anonymous_threshold=0.60,
+            video_track_vote_candidate_floor=0.70,
+        ),
+        _Matcher({1.0: [FaceMatch(anonymous, "anonymous-sample", 0.65)]}),
+    )
+
+    decision = await voter.resolve(_track([1.0]))
+
+    assert decision.match is not None
+    assert decision.match.identity.face_id == "anonymous-face"
+    assert decision.match.sample_id == "anonymous-sample"
+    assert decision.score == pytest.approx(0.65)
+
+
+@pytest.mark.asyncio
+async def test_known_match_below_known_threshold_is_not_accepted_as_strong():
+    known = _identity("known-face")
+    voter = VideoIdentityVotingService(
+        Settings(
+            recognition_threshold=0.80,
+            anonymous_threshold=0.60,
+            video_track_vote_candidate_floor=0.70,
+        ),
+        _Matcher({1.0: [FaceMatch(known, "known-sample", 0.65)]}),
+    )
+
+    decision = await voter.resolve(_track([1.0]))
+
+    assert decision.match is None
+    assert decision.score == pytest.approx(0.65)
 
 
 @pytest.mark.asyncio
@@ -116,7 +156,32 @@ async def test_rejected_vote_preserves_nearest_cosine():
 
 
 @pytest.mark.asyncio
-async def test_anonymous_exact_match_cannot_suppress_named_candidate():
+async def test_weak_consensus_below_support_ratio_is_rejected():
+    identity = _identity("face-a")
+    voter = VideoIdentityVotingService(
+        Settings(
+            recognition_threshold=0.90,
+            video_track_vote_candidate_floor=0.70,
+            video_track_vote_min_count=2,
+            video_track_vote_min_support_ratio=0.75,
+        ),
+        _Matcher(
+            {
+                1.0: [FaceMatch(identity, "s1", 0.82)],
+                2.0: [FaceMatch(identity, "s2", 0.80)],
+                3.0: [],
+            }
+        ),
+    )
+
+    decision = await voter.resolve(_track([1.0, 2.0, 3.0]))
+
+    assert decision.match is None
+    assert decision.score == pytest.approx(0.82)
+
+
+@pytest.mark.asyncio
+async def test_stronger_anonymous_candidate_can_outrank_named_candidate():
     known = _identity("known-face")
     anonymous = _anonymous("anonymous-face")
     voter = VideoIdentityVotingService(
@@ -137,8 +202,8 @@ async def test_anonymous_exact_match_cannot_suppress_named_candidate():
     decision = await voter.resolve(_track([1.0]))
 
     assert decision.match is not None
-    assert decision.match.identity.face_id == "known-face"
-    assert decision.score == pytest.approx(0.72)
+    assert decision.match.identity.face_id == "anonymous-face"
+    assert decision.score == pytest.approx(1.0)
 
 
 @pytest.mark.asyncio

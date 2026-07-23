@@ -100,9 +100,7 @@ class NativeLiveRunner:
         await process.stdin.drain()
         stderr_task = asyncio.create_task(self._drain_stderr(process.stderr))
         writer_task = asyncio.create_task(self._write_commands(process.stdin, commands))
-        reader_task = asyncio.create_task(
-            self._read_events(process.stdout, start, on_event)
-        )
+        reader_task = asyncio.create_task(self._read_events(process.stdout, start, on_event))
         try:
             stopped = await reader_task
             return_code = await process.wait()
@@ -135,7 +133,11 @@ class NativeLiveRunner:
         on_event: EventHandler,
     ) -> StoppedEvent | None:
         context = DecodeContext(
-            start.header.camera_id, start.header.run_id, start.header.generation
+            start.header.session_id,
+            start.header.camera_id,
+            start.header.run_id,
+            start.header.generation,
+            start.header.runtime_attempt,
         )
         previous_sequence = -1
         stopped = None
@@ -164,9 +166,7 @@ class NativeLiveRunner:
                 stopped = event
 
     @staticmethod
-    async def _write_commands(
-        stdin: asyncio.StreamWriter, commands: LiveCommandQueue
-    ) -> None:
+    async def _write_commands(stdin: asyncio.StreamWriter, commands: LiveCommandQueue) -> None:
         while True:
             command = await commands.get()
             stdin.write(encode_message(command))

@@ -5,10 +5,13 @@ from app.infrastructure.database.models import VideoTrack
 
 
 class VideoTrackRepository:
+    async def delete_for_job(self, session: AsyncSession, job_id: str) -> None:
+        await session.execute(delete(VideoTrack).where(VideoTrack.job_id == job_id))
+
     async def replace_for_job(
         self, session: AsyncSession, job_id: str, tracks: list[VideoTrack]
     ) -> list[VideoTrack]:
-        await session.execute(delete(VideoTrack).where(VideoTrack.job_id == job_id))
+        await self.delete_for_job(session, job_id)
         session.add_all(tracks)
         await session.flush()
         return tracks

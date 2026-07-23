@@ -15,7 +15,7 @@
 
 namespace mvision {
 
-inline constexpr std::uint32_t kLiveProtocolVersion = 1;
+inline constexpr std::uint32_t kLiveProtocolVersion = 2;
 inline constexpr std::uint32_t kMaxLiveFrameBytes = 4U * 1024U * 1024U;
 inline constexpr std::size_t kMaxAlignedJpegBytes = 512U * 1024U;
 inline constexpr std::size_t kMaxLiveObservations = 10U;
@@ -23,9 +23,11 @@ inline constexpr std::size_t kMaxLiveObservations = 10U;
 struct ProtocolHeader {
   std::uint32_t protocol_version;
   std::string message_type;
+  std::string session_id;
   std::string camera_id;
   std::string run_id;
   std::uint64_t generation;
+  std::uint64_t runtime_attempt;
   std::uint64_t sequence;
   std::string traceparent;
   std::optional<std::string> tracestate;
@@ -42,10 +44,19 @@ struct StartCommand {
   std::string output_mount_path;
   std::uint16_t output_udp_port;
   std::uint16_t output_rtsp_port;
+  std::uint32_t profile_version;
+  std::string analytics_mode;
+  std::uint32_t sample_every_n;
+  double detector_threshold;
+  double recognition_threshold;
+  double top2_margin;
+  std::uint64_t track_gap_ns;
   std::uint32_t latency_ms;
   std::uint32_t reconnect_interval_seconds;
   std::int32_t reconnect_attempts;
   std::uint64_t frame_timeout_ns;
+  bool recording_enabled;
+  bool annotated_enabled;
 };
 
 struct IdentityAssignment {
@@ -156,9 +167,11 @@ class LiveProtocolError : public std::runtime_error {
 };
 
 struct DecodeContext {
+  std::string session_id;
   std::string camera_id;
   std::string run_id;
   std::uint64_t generation;
+  std::uint64_t runtime_attempt;
   std::unordered_map<std::uint64_t, std::uint64_t> assignment_revisions;
 };
 

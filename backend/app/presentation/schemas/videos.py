@@ -81,6 +81,8 @@ class VideoResultResponse(ApiModel):
 
 class FaceVideoAppearanceResponse(ApiModel):
     job_id: str
+    process_id: str
+    video_url: str
     track_id: str
     first_seen: float
     last_seen: float

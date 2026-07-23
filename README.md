@@ -568,6 +568,16 @@ Qdrant, and MinIO contain persistent recognition data.
 
 ## Design Documents
 
+- `requirements/live-streaming-requirements.md`
+- `docs/superpowers/specs/2026-07-22-live-analytics-platform-roadmap-design.md`
+- `docs/superpowers/specs/2026-07-22-configurable-camera-session-api-design.md`
+- `docs/superpowers/specs/2026-07-22-live-frame-json-output-design.md`
+- `docs/superpowers/specs/2026-07-22-optional-recording-design.md`
+- `docs/superpowers/specs/2026-07-22-optional-annotated-stream-design.md`
+- `docs/superpowers/specs/2026-07-22-isolated-multi-camera-design.md`
+
+Implemented historical baseline:
+
 - `docs/superpowers/specs/2026-07-21-single-camera-livestream-design.md`
 - `docs/superpowers/specs/2026-07-21-opentelemetry-observability-design.md`
 - `docs/superpowers/plans/2026-07-21-single-camera-livestream.md`

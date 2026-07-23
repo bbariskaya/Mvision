@@ -2,25 +2,29 @@ import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import UUID, uuid5
 
 from app.config import Settings
-from app.infrastructure.database.ids import new_uuid7
 from app.infrastructure.database.models import VideoJob, VideoTrack
 from app.infrastructure.database.repositories import (
+    ProcessRecordRepository,
     RecognitionResultRepository,
+    VideoJobRepository,
     VideoTrackRepository,
 )
 from app.infrastructure.database.session import AsyncSessionLocal
 from app.infrastructure.video.protocol import VideoTrackOutput
 from app.services.face_matcher import FaceMatch
 from app.services.face_sample_persistence_service import FaceSamplePersistenceService
-from app.services.video_tracking_service import CanonicalVideoTrack, VideoTrackingService
 from app.services.video_identity_voting_service import (
     VideoIdentityDecision,
     VideoIdentityVotingService,
 )
+from app.services.video_tracking_service import CanonicalVideoTrack, VideoTrackingService
 
 
 class SessionFactory(Protocol):
@@ -28,6 +32,16 @@ class SessionFactory(Protocol):
 
 
 EvidenceExtractor = Callable[[Path, float], Awaitable[bytes] | bytes]
+
+
+class VideoFinalizationLeaseLostError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class VideoFinalizationResult:
+    person_count: int
+    faces: tuple[dict[str, str], ...]
 
 
 class VideoResultService:
@@ -39,6 +53,8 @@ class VideoResultService:
         samples: FaceSamplePersistenceService,
         results: RecognitionResultRepository,
         tracks: VideoTrackRepository,
+        jobs: VideoJobRepository,
+        processes: ProcessRecordRepository,
         *,
         session_factory: SessionFactory = AsyncSessionLocal,
         evidence_extractor: EvidenceExtractor | None = None,
@@ -49,6 +65,8 @@ class VideoResultService:
         self._samples = samples
         self._results = results
         self._tracks = tracks
+        self._jobs = jobs
+        self._processes = processes
         self._session_factory = session_factory
         self._evidence_extractor = evidence_extractor or self._extract_frame
 
@@ -57,22 +75,34 @@ class VideoResultService:
         job: VideoJob,
         raw_tracks: list[VideoTrackOutput],
         source_path: Path,
-    ) -> int:
+        worker_id: str,
+        lease_token: str,
+        processed_frames: int,
+    ) -> VideoFinalizationResult:
         canonical_tracks = self._tracking.reconcile(raw_tracks)
         resolved_matches = [
             await self._voter.resolve(track) for track in canonical_tracks
         ]
         persisted: list[VideoTrack] = []
+        faces: list[dict[str, str]] = []
         assigned: dict[str, list[tuple[float, float]]] = {}
         async with self._session_factory() as session:
+            owned_job = await self._jobs.lock_owned(
+                session, job.job_id, worker_id, lease_token, datetime.now(UTC)
+            )
+            if owned_job is None:
+                raise VideoFinalizationLeaseLostError("Video job lease was lost")
             for ordinal, (track, decision) in enumerate(
                 zip(canonical_tracks, resolved_matches, strict=True)
             ):
                 match = decision.match
                 if match is not None and self._blocked(match, track, assigned):
                     decision = VideoIdentityDecision(None, decision.score)
-                outcome = await self._identity_outcome(job, track, decision, source_path)
-                result_id = new_uuid7()
+                outcome = await self._identity_outcome(
+                    job, track, decision, source_path, ordinal
+                )
+                result_id = self._deterministic_id(job.job_id, track, ordinal, "result")
+                track_id = self._deterministic_id(job.job_id, track, ordinal, "track")
                 representative = max(
                     track.detections,
                     key=lambda item: (item.detector_confidence, -item.frame),
@@ -93,7 +123,7 @@ class VideoResultService:
                 )
                 persisted.append(
                     VideoTrack(
-                        track_id=track.track_id,
+                        track_id=track_id,
                         job_id=job.job_id,
                         track_ordinal=ordinal,
                         source_tracker_ids=list(track.source_tracker_ids),
@@ -119,9 +149,40 @@ class VideoResultService:
                 assigned.setdefault(outcome["face_id"], []).append(
                     (track.first_seen, track.last_seen)
                 )
+                faces.append(
+                    {"face_id": outcome["face_id"], "status": outcome["status"]}
+                )
             await self._tracks.replace_for_job(session, job.job_id, persisted)
+            completed = await self._jobs.complete(
+                session,
+                job.job_id,
+                worker_id,
+                lease_token,
+                len(persisted),
+                processed_frames=processed_frames,
+            )
+            if not completed:
+                raise VideoFinalizationLeaseLostError(
+                    "Video job lease was lost before completion"
+                )
+            details = {
+                "operation": "video_recognize",
+                "video": {
+                    "duration": job.duration_seconds,
+                    "fps": job.fps,
+                    "width": job.width,
+                    "height": job.height,
+                    "total_frames": job.total_frames,
+                    "processed_frames": processed_frames,
+                },
+                "person_count": len(persisted),
+                "faces": faces,
+            }
+            await self._processes.complete(
+                session, job.process_id, len(persisted), details=details
+            )
             await session.commit()
-        return len(persisted)
+        return VideoFinalizationResult(len(persisted), tuple(faces))
 
     async def _identity_outcome(
         self,
@@ -129,6 +190,7 @@ class VideoResultService:
         track: CanonicalVideoTrack,
         decision: VideoIdentityDecision,
         source_path: Path,
+        ordinal: int,
     ) -> dict[str, Any]:
         match = decision.match
         if match is not None:
@@ -146,8 +208,8 @@ class VideoResultService:
                 else self._settings.anonymous_threshold,
             }
 
-        face_id = new_uuid7()
-        sample_id = new_uuid7()
+        face_id = self._deterministic_id(job.job_id, track, ordinal, "face")
+        sample_id = self._deterministic_id(job.job_id, track, ordinal, "sample")
         evidence = track.representative_jpeg
         if not evidence:
             extracted = self._evidence_extractor(source_path, track.first_seen)
@@ -181,6 +243,16 @@ class VideoResultService:
             "confidence": decision.score if decision.score is not None else 0.0,
             "threshold": self._settings.anonymous_threshold,
         }
+
+    @staticmethod
+    def _deterministic_id(
+        job_id: str,
+        track: CanonicalVideoTrack,
+        ordinal: int,
+        kind: str,
+    ) -> str:
+        source_ids = ",".join(str(value) for value in track.source_tracker_ids)
+        return str(uuid5(UUID(job_id), f"{kind}:{ordinal}:{source_ids}"))
 
     @staticmethod
     def _blocked(

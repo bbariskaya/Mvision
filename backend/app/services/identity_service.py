@@ -53,7 +53,18 @@ class IdentityService:
                 await session.commit()
                 raise NotFoundError("Face identity not found", process_id)
             samples = await self._sample_repo.list_by_face(session, face_id, True)
-            await self._process_repo.complete(session, process_id, 1)
+            await self._process_repo.complete(
+                session,
+                process_id,
+                1,
+                details={
+                    "operation": "update",
+                    "face_count": 1,
+                    "faces": [
+                        {"face_id": identity.face_id, "status": identity.lifecycle_status}
+                    ],
+                },
+            )
             await session.commit()
         await self._log_event(process_id, "identity_updated", {"face_id": face_id})
         return self._identity_dict(identity, len(samples), process_id)
@@ -68,7 +79,18 @@ class IdentityService:
                 await session.commit()
                 raise NotFoundError("Face identity not found", process_id)
             sample_ids = await self._sample_repo.deactivate_by_face(session, face_id)
-            await self._process_repo.complete(session, process_id, 1)
+            await self._process_repo.complete(
+                session,
+                process_id,
+                1,
+                details={
+                    "operation": "delete",
+                    "face_count": 1,
+                    "faces": [
+                        {"face_id": identity.face_id, "status": identity.lifecycle_status}
+                    ],
+                },
+            )
             await session.commit()
         for sample_id in sample_ids:
             await self._qdrant.deactivate(sample_id)

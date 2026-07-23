@@ -154,8 +154,9 @@ void validate_exact_fields(const ObjectMap& values,
 void validate_fields(const ObjectMap& values,
                      const std::set<std::string>& message_fields) {
   static const std::set<std::string> header_fields{
-      "protocol_version", "message_type", "camera_id",
-      "run_id", "generation", "sequence", "traceparent", "tracestate"};
+      "protocol_version", "message_type", "session_id", "camera_id",
+      "run_id", "generation", "runtime_attempt", "sequence", "traceparent",
+      "tracestate"};
   auto expected = header_fields;
   expected.insert(message_fields.begin(), message_fields.end());
   validate_exact_fields(values, expected);
@@ -178,9 +179,11 @@ ProtocolHeader decode_header(const ObjectMap& values) {
   validate_trace_context(traceparent, tracestate);
   return {static_cast<std::uint32_t>(version),
           message_type,
+          uuid_value(required(values, "session_id")),
           uuid_value(required(values, "camera_id")),
           uuid_value(required(values, "run_id")),
           unsigned_integer(required(values, "generation"), 1),
+          unsigned_integer(required(values, "runtime_attempt"), 1),
           unsigned_integer(required(values, "sequence")), traceparent, tracestate};
 }
 
@@ -220,12 +223,16 @@ void pack_header(Packer& packer, const ProtocolHeader& header) {
   packer.pack(header.protocol_version);
   packer.pack(std::string("message_type"));
   packer.pack(header.message_type);
+  packer.pack(std::string("session_id"));
+  packer.pack(header.session_id);
   packer.pack(std::string("camera_id"));
   packer.pack(header.camera_id);
   packer.pack(std::string("run_id"));
   packer.pack(header.run_id);
   packer.pack(std::string("generation"));
   packer.pack(header.generation);
+  packer.pack(std::string("runtime_attempt"));
+  packer.pack(header.runtime_attempt);
   packer.pack(std::string("sequence"));
   packer.pack(header.sequence);
   packer.pack(std::string("traceparent"));
@@ -291,19 +298,54 @@ LiveMessage decode_payload(const ObjectMap& values) {
     validate_fields(values,
                     {"uri", "gpu_id", "pgie_config_path", "preprocess_config_path",
                       "sgie_config_path", "tracker_config_path", "output_mount_path",
-                      "output_udp_port", "output_rtsp_port", "latency_ms",
-                      "reconnect_interval_seconds", "reconnect_attempts",
-                      "frame_timeout_ns"});
+                      "output_udp_port", "output_rtsp_port", "profile_version",
+                      "analytics_mode", "sample_every_n", "detector_threshold",
+                      "recognition_threshold", "top2_margin", "track_gap_ns",
+                      "latency_ms", "reconnect_interval_seconds",
+                      "reconnect_attempts", "frame_timeout_ns",
+                      "recording_enabled", "annotated_enabled"});
     const auto port = unsigned_integer(required(values, "output_udp_port"), 1);
     const auto rtsp_port =
         unsigned_integer(required(values, "output_rtsp_port"), 1);
+    const auto profile_version =
+        unsigned_integer(required(values, "profile_version"), 1);
+    const auto sample_every_n =
+        unsigned_integer(required(values, "sample_every_n"), 1);
+    const auto latency_ms = unsigned_integer(required(values, "latency_ms"));
+    const auto reconnect_interval_seconds =
+        unsigned_integer(required(values, "reconnect_interval_seconds"));
     if (port > std::numeric_limits<std::uint16_t>::max() ||
-        rtsp_port > std::numeric_limits<std::uint16_t>::max()) {
+        rtsp_port > std::numeric_limits<std::uint16_t>::max() ||
+        profile_version > std::numeric_limits<std::uint32_t>::max() ||
+        sample_every_n > std::numeric_limits<std::uint32_t>::max() ||
+        latency_ms > std::numeric_limits<std::uint32_t>::max() ||
+        reconnect_interval_seconds > std::numeric_limits<std::uint32_t>::max()) {
       fail("INVALID_INTEGER");
     }
     const auto attempts = signed_integer(required(values, "reconnect_attempts"));
     if (attempts < -1 || attempts > std::numeric_limits<std::int32_t>::max()) {
       fail("INVALID_INTEGER");
+    }
+    const auto analytics_mode = string_value(required(values, "analytics_mode"));
+    if (analytics_mode != "detect" && analytics_mode != "detectTrack" &&
+        analytics_mode != "recognize") {
+      fail("INVALID_PAYLOAD");
+    }
+    const auto detector_threshold =
+        finite_number(required(values, "detector_threshold"));
+    const auto recognition_threshold =
+        finite_number(required(values, "recognition_threshold"));
+    const auto top2_margin = finite_number(required(values, "top2_margin"));
+    if (detector_threshold < 0.0 || detector_threshold > 1.0 ||
+        recognition_threshold < 0.0 || recognition_threshold > 1.0 ||
+        top2_margin < 0.0 || top2_margin > 1.0) {
+      fail("INVALID_PAYLOAD");
+    }
+    const auto& recording_enabled = required(values, "recording_enabled");
+    const auto& annotated_enabled = required(values, "annotated_enabled");
+    if (recording_enabled.type != msgpack::type::BOOLEAN ||
+        annotated_enabled.type != msgpack::type::BOOLEAN) {
+      fail("INVALID_PAYLOAD");
     }
     return StartCommand{
         header,
@@ -316,11 +358,19 @@ LiveMessage decode_payload(const ObjectMap& values) {
         string_value(required(values, "output_mount_path")),
         static_cast<std::uint16_t>(port),
         static_cast<std::uint16_t>(rtsp_port),
-        static_cast<std::uint32_t>(unsigned_integer(required(values, "latency_ms"))),
-        static_cast<std::uint32_t>(
-            unsigned_integer(required(values, "reconnect_interval_seconds"))),
+        static_cast<std::uint32_t>(profile_version),
+        analytics_mode,
+        static_cast<std::uint32_t>(sample_every_n),
+        detector_threshold,
+        recognition_threshold,
+        top2_margin,
+        unsigned_integer(required(values, "track_gap_ns"), 1),
+        static_cast<std::uint32_t>(latency_ms),
+        static_cast<std::uint32_t>(reconnect_interval_seconds),
         static_cast<std::int32_t>(attempts),
-        unsigned_integer(required(values, "frame_timeout_ns"), 1)};
+        unsigned_integer(required(values, "frame_timeout_ns"), 1),
+        recording_enabled.as<bool>(),
+        annotated_enabled.as<bool>()};
   }
   if (header.message_type == "identity_assignment") {
     validate_fields(values, {"tracker_id", "assignment_revision", "identity_epoch",
@@ -527,7 +577,7 @@ std::vector<std::uint8_t> encode_live_message(const LiveMessage& message) {
       [&](const auto& value) {
         using Message = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<Message, StartCommand>) {
-          packer.pack_map(21);
+          packer.pack_map(32);
           pack_header(packer, value.header);
           pack_field(packer, "uri", value.uri);
           pack_field(packer, "gpu_id", value.gpu_id);
@@ -538,13 +588,22 @@ std::vector<std::uint8_t> encode_live_message(const LiveMessage& message) {
           pack_field(packer, "output_mount_path", value.output_mount_path);
           pack_field(packer, "output_udp_port", value.output_udp_port);
           pack_field(packer, "output_rtsp_port", value.output_rtsp_port);
+          pack_field(packer, "profile_version", value.profile_version);
+          pack_field(packer, "analytics_mode", value.analytics_mode);
+          pack_field(packer, "sample_every_n", value.sample_every_n);
+          pack_field(packer, "detector_threshold", value.detector_threshold);
+          pack_field(packer, "recognition_threshold", value.recognition_threshold);
+          pack_field(packer, "top2_margin", value.top2_margin);
+          pack_field(packer, "track_gap_ns", value.track_gap_ns);
           pack_field(packer, "latency_ms", value.latency_ms);
           pack_field(packer, "reconnect_interval_seconds",
                      value.reconnect_interval_seconds);
           pack_field(packer, "reconnect_attempts", value.reconnect_attempts);
           pack_field(packer, "frame_timeout_ns", value.frame_timeout_ns);
+          pack_field(packer, "recording_enabled", value.recording_enabled);
+          pack_field(packer, "annotated_enabled", value.annotated_enabled);
         } else if constexpr (std::is_same_v<Message, IdentityAssignment>) {
-          packer.pack_map(18);
+          packer.pack_map(20);
           pack_header(packer, value.header);
           pack_field(packer, "tracker_id", value.tracker_id);
           pack_field(packer, "assignment_revision", value.assignment_revision);
@@ -558,29 +617,29 @@ std::vector<std::uint8_t> encode_live_message(const LiveMessage& message) {
           pack_optional(packer, "reference_embedding", value.reference_embedding);
           pack_field(packer, "decision_sequence", value.decision_sequence);
         } else if constexpr (std::is_same_v<Message, StopCommand>) {
-          packer.pack_map(10);
+          packer.pack_map(12);
           pack_header(packer, value.header);
           pack_field(packer, "reason", value.reason);
           pack_field(packer, "shutdown_deadline_ns", value.shutdown_deadline_ns);
         } else if constexpr (std::is_same_v<Message, HelloEvent>) {
-          packer.pack_map(11);
+          packer.pack_map(13);
           pack_header(packer, value.header);
           pack_field(packer, "build_id", value.build_id);
           pack_field(packer, "gstreamer_version", value.gstreamer_version);
           pack_field(packer, "deepstream_version", value.deepstream_version);
         } else if constexpr (std::is_same_v<Message, StateEvent>) {
-          packer.pack_map(10);
+          packer.pack_map(12);
           pack_header(packer, value.header);
           pack_field(packer, "state", value.state);
           pack_optional(packer, "reason", value.reason);
         } else if constexpr (std::is_same_v<Message, OutputReadyEvent>) {
-          packer.pack_map(11);
+          packer.pack_map(13);
           pack_header(packer, value.header);
           pack_field(packer, "mount_path", value.mount_path);
           pack_field(packer, "codec", value.codec);
           pack_field(packer, "caps", value.caps);
         } else if constexpr (std::is_same_v<Message, TrackEvidenceEvent>) {
-          packer.pack_map(14);
+          packer.pack_map(16);
           pack_header(packer, value.header);
           pack_field(packer, "tracker_id", value.tracker_id);
           pack_field(packer, "evidence_revision", value.evidence_revision);
@@ -594,7 +653,7 @@ std::vector<std::uint8_t> encode_live_message(const LiveMessage& message) {
           packer.pack(std::string("representative_aligned_jpeg"));
           pack_jpeg(packer, value.representative_aligned_jpeg);
         } else if constexpr (std::is_same_v<Message, TrackExpiredEvent>) {
-          packer.pack_map(13);
+          packer.pack_map(15);
           pack_header(packer, value.header);
           pack_field(packer, "tracker_id", value.tracker_id);
           pack_field(packer, "evidence_revision", value.evidence_revision);
@@ -602,17 +661,17 @@ std::vector<std::uint8_t> encode_live_message(const LiveMessage& message) {
           pack_field(packer, "last_seen_ns", value.last_seen_ns);
           pack_field(packer, "reason", value.reason);
         } else if constexpr (std::is_same_v<Message, MetricsEvent>) {
-          packer.pack_map(10);
+          packer.pack_map(12);
           pack_header(packer, value.header);
           pack_field(packer, "counters", value.counters);
           pack_field(packer, "gauges", value.gauges);
         } else if constexpr (std::is_same_v<Message, FailedEvent>) {
-          packer.pack_map(10);
+          packer.pack_map(12);
           pack_header(packer, value.header);
           pack_field(packer, "error_code", value.error_code);
           pack_field(packer, "message", value.message);
         } else if constexpr (std::is_same_v<Message, StoppedEvent>) {
-          packer.pack_map(13);
+          packer.pack_map(15);
           pack_header(packer, value.header);
           pack_field(packer, "decoded_frames", value.decoded_frames);
           pack_field(packer, "emitted_evidence", value.emitted_evidence);
@@ -620,7 +679,7 @@ std::vector<std::uint8_t> encode_live_message(const LiveMessage& message) {
           pack_field(packer, "clean_shutdown", value.clean_shutdown);
           pack_field(packer, "reason", value.reason);
         } else if constexpr (std::is_same_v<Message, NativeOperationEvent>) {
-          packer.pack_map(14);
+          packer.pack_map(16);
           pack_header(packer, value.header);
           pack_field(packer, "operation", value.operation);
           pack_field(packer, "started_monotonic_ns", value.started_monotonic_ns);
@@ -660,9 +719,13 @@ LiveMessage decode_live_message(const std::vector<std::uint8_t>& frame,
     if (context != nullptr) {
       const auto header = std::visit(
           [](const auto& value) { return value.header; }, message);
+      if (header.session_id != context->session_id) fail("WRONG_SESSION_ID");
       if (header.camera_id != context->camera_id) fail("WRONG_CAMERA_ID");
       if (header.run_id != context->run_id) fail("WRONG_RUN_ID");
       if (header.generation != context->generation) fail("WRONG_GENERATION");
+      if (header.runtime_attempt != context->runtime_attempt) {
+        fail("WRONG_RUNTIME_ATTEMPT");
+      }
       if (auto* assignment = std::get_if<IdentityAssignment>(&message)) {
         const auto previous = context->assignment_revisions[assignment->tracker_id];
         if (assignment->assignment_revision <= previous) {

@@ -1,243 +1,283 @@
-# Face Recognition API - Live Streaming Additional Requirements
+# Face Recognition API - Live Streaming Requirements
 
-## 1. Purpose And Relationship To Existing Requirements
+## 1. Product Outcome
 
 This document extends `requirements/videorequirements.md` to continuous live
-sources. Existing image and video identity semantics remain valid unless this
-document explicitly narrows them for an unbounded stream.
+sources. Existing image and video identity semantics remain valid where they
+apply to an unbounded stream.
 
-The primary live product result is not an annotated video. It answers:
+The default live result is JSON for every processed frame. It contains the
+frame time and dimensions plus every detected face's bounding box, landmarks,
+tracker state, identity state, and confidence values. A processed frame with no
+face still produces a successful result with an empty `faces` array.
 
-- which global person identity appeared;
-- at which caller-provided camera/location;
-- during which absolute UTC intervals;
-- for how much total observed duration;
-- and which retained recording samples provide evidence for the result.
+Person-based `firstSeen`, `lastSeen`, intervals, and total duration are an
+optional aggregation output. Recording and annotated media are also optional.
 
-Annotated streaming, recording, per-frame detections, and external event
-delivery are configurable outputs. They do not replace the appearance result.
+## 2. Canonical Media Ingress
 
-## 2. Caller-Owned Source And Location
+Mvision MediaMTX is the media boundary between a caller-owned source and the GPU
+worker. A session supports these typed source variants:
 
-- A caller may register a durable camera source or start an authorized session
-  with an inline source.
-- RTSP credentials are write-only and must be encrypted before persistence.
-- Mvision must never infer a physical location from camera pixels.
-- A caller may register a typed location and associate it with a camera source.
-- A location contains a caller-scoped identifier, site identifier, area or zone
-  identifier, and display name.
-- Location association is optional. When absent, results contain the camera ID
-  and `location: null`.
-- A session snapshots its location at generation start. Later source/location
-  edits must not rewrite historical appearances.
+- `rtspPull`: Mvision pulls an RTSP URL;
+- `whepPull`: Mvision pulls a WebRTC/WHEP URL;
+- `whipPush`: the caller publishes to a Mvision-generated WHIP URL.
 
-## 3. Session-Based Processing
+For every variant, MediaMTX exposes one generation-scoped internal RTSP path to
+the DeepStream worker. DeepStream does not implement separate caller-facing
+WebRTC ingest logic.
 
-- Every live run belongs to a durable session and immutable generation.
-- The caller selects a versioned pipeline profile and typed request overrides.
-- Changing processing behavior creates a new generation and a controlled
-  restart; an active generation is never mutated silently.
-- A session exposes explicit desired and runtime state.
-- Source start, stop, reconfigure, worker assignment, reconnect, and failure are
-  fenced by session ID and generation.
-- A request idempotency key must not create duplicate sessions.
-- Existing global environment values may seed platform defaults but are not the
-  runtime source of truth after session compilation.
+For `whipPush`, session creation returns a write-only publish URL and the session
+waits for media automatically. For pull modes, source credentials are encrypted
+before persistence and never returned by the API.
 
-## 4. Typed Pipeline Configuration
+MediaMTX Control API configuration is runtime state, not durable configuration.
+PostgreSQL stores desired session state and a reconciler recreates required
+paths after MediaMTX or controller restart.
 
-The API must expose typed, versioned configuration for at least:
+## 3. Session Lifecycle
 
-- analytics mode: detection, detection with tracking, or recognition;
-- sampling mode and rate;
-- detector, recognition, quality, and ambiguity thresholds;
-- alignment mode;
-- tracker policy and maximum observation gap;
-- global anonymous identity behavior;
-- appearance interval and merge-gap behavior;
+- `POST /api/v1/live/sessions` validates, persists, provisions, and immediately
+  begins starting the session.
+- A push session may remain `WAITING_FOR_SOURCE` until its publisher connects.
+- Runtime states are `ACCEPTED`, `WAITING_FOR_SOURCE`, `STARTING`, `ACTIVE`,
+  `RECONNECTING`, `STOPPING`, `STOPPED`, and `FAILED`.
+- Every session has an immutable current generation and a requested/resolved
+  configuration snapshot.
+- Reconfiguration creates the next generation and performs a controlled restart.
+- Results and media paths are fenced by session ID and generation.
+- A caller may provide a camera identifier and optional location object. The
+  generation stores a snapshot; later edits do not rewrite historical results.
+- API authentication uses the deployment's configured API key.
+
+## 4. Typed Processing Configuration
+
+The caller selects a built-in, versioned profile and may provide supported typed
+overrides. The initial API does not include profile publication or arbitrary
+pipeline graph management.
+
+Supported controls include:
+
+- analytics mode: `detect`, `detectTrack`, or `recognize`;
+- processed-frame sampling rate;
+- detector, recognition, anonymous-match, and ambiguity thresholds;
+- tracking maximum gap and recognition evidence count;
+- optional persistent anonymous identity creation;
 - source latency, timeout, and reconnect policy;
-- recording enablement, segment duration, and retention;
-- JSON result granularity and connector references;
-- annotated stream enablement, protocols, bounding-box style, landmark style,
-  and label fields;
-- resource class and admin-scoped placement constraints.
+- frame JSON connector references and retention policy;
+- optional appearance aggregation;
+- optional recording and annotated output settings.
 
-Callers must not supply filesystem config paths, arbitrary GStreamer properties,
-model binaries, shell commands, raw GPU process arguments, or MediaMTX control
-API payloads.
+Recognition always uses the model-compatible five-point alignment path. Callers
+cannot provide model paths, TensorRT engines, filesystem configuration paths,
+GStreamer properties, shell commands, GPU IDs, ports, or MediaMTX API payloads.
+Unknown or contradictory fields are validation errors and are never ignored.
 
-Recognition requires the model-compatible alignment mode. Contradictory fields
-must produce a stable validation error instead of being ignored.
+## 5. Default Frame JSON
 
-## 5. Identity Semantics
+The system emits one `frame.result` object for every frame selected by the
+session's sampling policy. Frame sequence is monotonic within one generation.
 
-- Known, anonymous, and new-anonymous retain their existing global meaning.
-- Known and active anonymous identities use global persistent `faceId` values.
-- A raw tracker ID is local to one camera session generation and must never be
-  used as a global identity.
-- A new anonymous identity may be created only after bounded quality-gated,
-  temporally diverse evidence and a final gallery recheck.
-- Every raw tracker must not automatically create an anonymous identity.
-- Storage failures must not leave a half-active anonymous identity.
-- Later recognition of the same anonymous person reuses the same `faceId`.
-- Enrollment changes lifecycle state to known without changing `faceId`.
-- Concurrent sessions must use fencing and final duplicate checks before
-  creating a new global anonymous identity.
-
-## 6. Appearance Results
-
-The primary result is grouped by global person identity, camera, and caller
-location. Each result contains at least:
-
-- `faceId`;
-- identity status snapshot;
-- known name and permitted metadata when applicable;
-- camera ID;
-- optional caller-provided location snapshot;
-- first seen UTC;
-- last seen UTC;
-- total observed duration;
-- raw appearance intervals;
-- session ID, generation, and timing epoch;
-- recording evidence state and references.
+```json
+{
+  "eventId": "uuid-v7",
+  "eventType": "frame.result",
+  "schemaVersion": 1,
+  "sessionId": "uuid",
+  "generation": 2,
+  "cameraId": "gate-1",
+  "location": {
+    "site": "office-a",
+    "area": "entrance",
+    "displayName": "Office A Entrance"
+  },
+  "frame": {
+    "sequence": 1842,
+    "observedAt": "2026-07-23T10:15:12.420Z",
+    "ptsNs": 61400000000,
+    "timeBasis": "mvisionObservedUtc",
+    "width": 1920,
+    "height": 1080
+  },
+  "faces": [
+    {
+      "detectionId": "uuid-v7",
+      "trackId": "42",
+      "faceId": "uuid-or-null-while-pending",
+      "status": "known",
+      "name": "Baris",
+      "metadata": {},
+      "boundingBox": {"x": 640, "y": 220, "width": 180, "height": 180},
+      "landmarks": [
+        {"x": 684, "y": 270},
+        {"x": 748, "y": 271},
+        {"x": 717, "y": 306},
+        {"x": 691, "y": 344},
+        {"x": 744, "y": 344}
+      ],
+      "detectorConfidence": 0.93,
+      "recognitionConfidence": 0.94
+    }
+  ]
+}
+```
 
 Rules:
 
-- Total duration is the sum of raw interval durations. Time between separate
-  intervals must not be counted.
-- A short detector miss that remains within the same valid tracker lifecycle
-  does not split an interval.
-- Tracker expiry, confirmed identity switch, session stop, or untrusted timing
-  discontinuity closes the raw interval.
-- A recording segment boundary does not close an appearance interval.
-- Query presentation may merge adjacent intervals for the same face and location
-  within a configured merge gap, but immutable raw intervals remain available.
-- If identity confirmation arrives late, the interval may start at the earliest
-  quality-gated and trusted observation retained by that track.
-- No-face periods are successful empty observation periods, not failures.
+- Geometry uses original source-frame pixels, even when inference is downscaled.
+- `trackId` is local to one session generation and is not a global identity.
+- `faceId` may be null while identity is pending; once a known or persistent
+  anonymous identity is confirmed, subsequent frame results carry its global ID.
+- Valid statuses are `pending`, `known`, `anonymous`, `newAnonymous`, and
+  `unknown` as applicable to the selected identity mode.
+- Embeddings, aligned crops, source credentials, and internal media paths never
+  appear in frame JSON.
+- Sampling controls how many frames are processed; every processed frame produces
+  exactly one frame result.
 
-## 7. Time Contract
+## 6. Optional Appearance Aggregation
 
-Every retained observation includes:
+When `appearanceSummary.enabled=true`, Mvision additionally produces
+`appearance.started` and `appearance.ended` events and durable pull results.
+These events do not replace frame results.
 
-- source absolute UTC when available;
-- source media time represented without floating-point loss;
-- same-timestamp access-unit ordinal when needed;
-- stream PTS in nanoseconds for diagnostics;
-- receive UTC for latency diagnostics;
-- time basis and time-quality enum;
-- timing epoch.
+An appearance result contains:
 
-MediaMTX absolute timestamps derived from RTCP sender reports are preferred.
-Receive time must never be silently substituted for trusted source UTC.
+- global `faceId`, identity status snapshot, permitted name, and metadata;
+- camera ID and optional location snapshot;
+- first and last observed UTC;
+- one or more raw intervals;
+- total observed duration as the sum of interval durations;
+- session ID, generation, local track references, and final confidence.
 
-Reconnect, timestamp jump, or unproven timestamp continuity creates a new timing
-epoch. Intervals on opposite sides of an untrusted epoch boundary are not merged
-as one raw interval.
+Tracker expiry, confirmed identity switch, session stop, or an untrusted timing
+reset closes an interval. Short misses within the configured tracker gap do not.
+Time between separate intervals is never counted as observed duration.
 
-## 8. Recording And Evidence
+## 7. Identity Semantics
 
-- Recording is optional per session.
-- When enabled, Mvision MediaMTX records fMP4 segments using the same ingress
-  time basis consumed by inference.
+- Known identities retain their global persistent `faceId`.
+- Persistent anonymous identity mode searches existing anonymous identities and
+  reuses their `faceId` when accepted.
+- A new anonymous identity is created only after sufficient quality-gated,
+  temporally separated evidence and a final duplicate check.
+- The first accepted occurrence uses `newAnonymous`; later occurrences use
+  `anonymous`.
+- Enrollment changes an anonymous identity to known without changing `faceId`.
+- Detection-only modes do not fabricate identity values.
+
+## 8. Time Semantics
+
+Stream PTS and absolute UTC are separate values. PTS must never be interpreted as
+Unix epoch time.
+
+The initial live contract uses `mvisionObservedUtc`: a stable wall-clock anchor
+plus monotonic stream progression for one timing epoch. If trusted source UTC is
+available later, it may be exposed under a distinct `timeBasis`. Reconnects or
+timestamp discontinuities start a new timing epoch rather than silently joining
+uncertain time ranges.
+
+Exact recording-sample indexes and zero-frame recording joins are not required
+by the initial live release.
+
+## 9. JSON Access And Delivery
+
+- Registered Webhook and Kafka connectors are selected with `connectorRef`.
+- Normal session requests do not contain raw destinations or credentials.
+- Frame JSON is dispatched through a direct asynchronous path; connector I/O
+  never runs on a GStreamer streaming thread and never blocks inference.
+- PostgreSQL persistence and connector delivery consume separate queues.
+- Stable event IDs allow consumers to deduplicate retries.
+- The direct Webhook path does not claim crash-safe at-least-once delivery.
+- Kafka durability begins after broker acknowledgement according to connector
+  configuration.
+- Pull APIs provide persisted recovery and history; newly delivered direct events
+  may briefly precede their pull-API visibility.
+- Each connector has bounded capacity. Saturation is observable. Frame events may
+  be rejected or dropped according to the declared connector policy rather than
+  stalling inference; the API validates obviously unsustainable requested rates.
+
+## 10. Optional Recording
+
+- Recording is disabled unless requested.
+- MediaMTX records the canonical, unannotated ingress stream as fMP4.
 - Production segment duration defaults to 15 minutes and is typed/configurable.
-- Completed segments are delivered to Mvision ingestion, uploaded to MinIO, and
-  represented by PostgreSQL manifests.
-- The full exact sample index is an immutable MinIO sidecar; PostgreSQL stores
-  business metadata and resolved evidence pointers.
-- A segment is `READY` only after video, index, checksums, and manifest finalize.
-- Recording evidence states are `pending`, `exact`, or `unaligned` with a stable
-  reason.
-- Exact evidence maps an observation to one recording segment and one exact video
-  sample index.
-- Nearest-frame, nominal-FPS, file-time, or receive-time fallback is forbidden.
-- Recording failure does not erase a realtime appearance, but the evidence gap
-  remains visible and auditable.
+- Completed segments are retained on persistent storage and may be uploaded to
+  the existing MinIO service asynchronously.
+- PostgreSQL stores segment state, actual start/end time, duration, path/object
+  reference, checksum, session, generation, camera, and location snapshot.
+- Recording failure is reported independently and does not stop frame JSON or
+  recognition.
+- The initial release does not require a per-sample sidecar or exact-frame
+  evidence resolver.
 
-## 9. Result Access And Delivery
+## 11. Optional Annotated Output
 
-- Durable pull APIs are always available for session, appearance, detection,
-  recording, and face-history results.
-- Registered webhook and Kafka connectors are supported.
-- Callers select connectors by `connectorRef`; raw destinations and credentials
-  are not accepted in normal session requests.
-- PostgreSQL result/outbox rows are authoritative for external delivery.
-- Delivery is at-least-once with a stable event ID for consumer deduplication.
-- Ordering is preserved per session generation.
-- Retry, terminal failure, replay, and dead-letter state are queryable.
-- Per-frame detection delivery is optional and independently retained; it must
-  not inflate the primary appearance response by default.
-
-## 10. Optional Annotated Streaming
-
-- Annotated output is disabled unless requested by the session specification.
-- A JSON-only session must not create an encoder, RTP output, MediaMTX annotated
-  path, or viewer URL.
-- When requested, the system creates the configured OSD and media branch and
-  returns URLs only after the path is actually ready.
-- Bounding-box enablement, color, line width, landmark rendering, and label
-  fields are typed request fields.
-- OSD behavior does not alter recognition, appearance, recording, or result
-  delivery semantics.
-- A stalled viewer must not block decode, inference, result persistence, or
+- Annotated output is disabled unless requested.
+- A JSON-only session creates no OSD, encoder, publisher, or annotated path.
+- Typed controls cover boxes, landmarks, labels, colors, and line width.
+- The worker publishes to a generation-scoped MediaMTX path.
+- The API returns simple RTSP and WebRTC viewer URLs only after that path is ready.
+- Viewer authentication is not required for the target deployment.
+- Viewer or publisher backpressure must not block inference, frame JSON, or
   recording.
 
-## 11. Multi-Camera Extensibility
+## 12. Multi-Camera Execution
 
-- The first configurable session implementation may retain one active pipeline
-  per worker, but all contracts must be camera/session scoped.
-- Workers advertise capabilities and resource availability.
-- A scheduler owns GPU placement, leases, admission control, and recovery.
-- Normal callers choose resource classes, not arbitrary GPU process arguments.
-- One camera failure must not mutate another camera's state or outputs.
-- Dynamic batching is a measured later optimization, not a prerequisite for
-  correctness-oriented multi-camera scheduling.
+- Initial multi-camera execution uses one isolated native process per active
+  session.
+- Existing PostgreSQL claim and lease fencing assigns work across a fixed worker
+  pool.
+- The single-running-camera database constraint and fixed per-worker public media
+  port are removed.
+- One source, process, connector, recording, or viewer failure cannot mutate
+  another session.
+- Shared dynamic DeepStream batching is a later measured optimization.
+- Cross-camera body ReID and trajectory stitching are out of scope.
 
-## 12. Security And Privacy
+## 13. API Surface
 
-- Source and connector credentials never appear in API responses, logs, traces,
-  metrics, events, manifests, or process arguments.
-- Connector destinations are registered, validated, caller-scoped resources.
-- Webhook destinations must be allowlisted against SSRF policy.
-- Kafka TLS/SASL material is stored as encrypted secret data or secret
-  references, never in session specs returned to callers.
-- Embeddings never appear in result delivery, manifests, metrics, or annotated
-  output metadata.
-- Dynamic IDs, names, locations, timestamps, paths, and trace IDs are not
-  Prometheus labels.
-- Every state-changing API operation is authenticated, authorized, and audited.
+```text
+GET  /api/v1/live/capabilities
+POST /api/v1/live/connectors
+POST /api/v1/live/sessions
+GET  /api/v1/live/sessions
+GET  /api/v1/live/sessions/{sessionId}
+POST /api/v1/live/sessions/{sessionId}/reconfigure
+POST /api/v1/live/sessions/{sessionId}/stop
+GET  /api/v1/live/sessions/{sessionId}/frames
+GET  /api/v1/live/sessions/{sessionId}/appearances
+GET  /api/v1/live/sessions/{sessionId}/recordings
+GET  /api/v1/live/faces/{faceId}/appearances
+```
 
-## 13. Failure Behavior
+Every endpoint has an OpenAPI request, response, and stable error contract.
 
-- Capacity exhaustion returns a stable rejection; it never produces false
-  `ACTIVE` state.
-- Invalid field combinations fail before source connection.
-- Source, worker, recording, connector, and storage states fail independently.
-- Result persistence is authoritative and must not depend on external connector
-  availability.
-- Connector failure never stops media processing.
-- Recording failure never fabricates exact evidence.
-- Timing degradation never fabricates source UTC.
-- Worker restart never silently extends an uncertain appearance duration.
-- Partial uploads and orphan objects are reconciled without destructive volume
-  reset.
+## 14. Failure Behavior
 
-## 14. Acceptance Requirements
+- Invalid session combinations fail before source connection.
+- Source, worker, JSON connector, persistence, recording, and annotated output
+  states fail independently.
+- A source reconnect never reports false `ACTIVE` while frames are stale.
+- A worker restart closes uncertain track intervals and never invents duration.
+- No-face frames are successful empty results.
+- MediaMTX path reconciliation is idempotent after restart.
+- Secrets and embeddings do not enter responses, events, logs, traces, or metrics.
+
+## 15. Acceptance
 
 Acceptance includes:
 
-- contract tests for every supported and forbidden session option combination;
-- deterministic known and global-anonymous appearance timelines;
-- correct first seen, last seen, interval, and total duration behavior;
-- exact zero-frame recording evidence on fast 15-second segments;
-- at least one real 15-minute segment rollover and durable ingestion;
-- inference restart without stopping recording;
-- upstream reconnect and timing-epoch fencing;
-- JSON-only execution with no annotated media branch;
-- requested annotated stream with a ready URL and non-blocking viewer behavior;
-- webhook and Kafka at-least-once delivery with duplicate-safe event IDs;
-- connector outage with uninterrupted live analytics;
-- controlled reconfiguration into a new immutable generation;
-- multi-camera admission, isolation, and recovery tests before multi-camera PASS;
-- explicit PASS, PARTIAL, BLOCKED, and NOT_TESTED reporting for every real-runtime
-  gate.
+- RTSP pull, WHEP pull, and WHIP push contract tests using MediaMTX fixtures;
+- one frame JSON for every processed frame, including empty-face frames;
+- original-pixel bbox and landmark parity against deterministic fixtures;
+- stable track IDs and correct known/persistent-anonymous transitions;
+- optional appearance first/last/interval/duration correctness;
+- direct connector outage without inference interruption and visible drops/retries;
+- JSON-only execution with no encoder or annotated MediaMTX path;
+- optional annotated RTSP and WebRTC playback with a stalled-viewer test;
+- fast short-segment recording tests plus one real 15-minute rollover;
+- MediaMTX restart followed by desired-path reconciliation;
+- controlled generation reconfiguration and stale-result fencing;
+- simultaneous isolated camera sessions before multi-camera PASS;
+- explicit PASS, PARTIAL, BLOCKED, and NOT_TESTED runtime evidence.

@@ -26,10 +26,12 @@ constexpr const char* kFaceA = "019b0000-0000-7000-8000-000000000003";
 constexpr const char* kFaceB = "019b0000-0000-7000-8000-000000000004";
 
 mvision::ProtocolHeader assignment_header(std::uint64_t sequence) {
-  return {1,
+  return {mvision::kLiveProtocolVersion,
           "identity_assignment",
           kCameraId,
+          kCameraId,
           kRunId,
+          1,
           1,
           sequence,
           "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",

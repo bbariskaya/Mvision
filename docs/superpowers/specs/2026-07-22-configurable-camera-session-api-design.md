@@ -1,336 +1,347 @@
-# Configurable Camera Session API Design
+# Configurable Live Session API Design
 
-**Status:** Draft for user review  
-**Phase:** Live Analytics Platform Phase 2
+**Status:** Approved direction
+**Delivery:** 1 - Session API And Media Ingress
+**Revised:** 2026-07-23
 
 ## Goal
 
-Replace fixed camera registration, body-less start, global config paths, fixed
-ports, and implicit output behavior with a typed, versioned session API. A caller
-can request detection, tracking, recognition, appearance aggregation, recording,
-JSON delivery, and optional annotated media without controlling unsafe runtime
-internals.
+Replace fixed camera registration, body-less start, global runtime settings, and
+fixed output ports with one typed live-session contract. Session creation starts
+work immediately and supports customer MediaMTX streams without adding WebRTC
+logic to the DeepStream worker.
 
 ## Non-Goals
 
-- Arbitrary GStreamer/DeepStream graphs or properties;
-- caller-provided config file paths, model binaries, process arguments, or shell
-  hooks;
-- multi-camera placement in this phase;
-- hot mutation of active processing behavior;
-- raw connector destinations in normal session requests.
-
-## Resources
-
-### Location
-
-Caller-owned typed business location:
-
-```json
-{
-  "locationId": "uuid",
-  "externalLocationId": "office-a-entrance",
-  "siteId": "office-a",
-  "areaId": "entrance",
-  "displayName": "Office A - Entrance"
-}
-```
-
-Mvision does not infer this data. Location is optional and caller scoped.
-
-### CameraSource
-
-Contains source type, encrypted write-only connection material, optional
-location reference, caller metadata, lifecycle state, and URI fingerprint.
-Responses never expose URI components or credentials.
-
-### PipelineProfile
-
-A profile has immutable versions. Each version contains typed platform-owned
-defaults and references to approved model/tracker artifacts. Existing fixed
-paths become the initial seeded profile, not caller-controlled fields.
-
-### Connector
-
-Registered Webhook or Kafka destination with encrypted secret material. Session
-specifications contain connector IDs and versions only.
-
-### CameraSession And SessionGeneration
-
-The session is durable caller intent and history. Each generation contains one
-immutable requested spec, resolved spec, spec hash, source/location snapshot,
-worker assignment, and runtime state.
+- profile publication or arbitrary user-created model stacks;
+- raw GStreamer, DeepStream, TensorRT, GPU, port, or filesystem settings;
+- arbitrary MediaMTX Control API payloads;
+- hot mutation of an active graph;
+- multi-camera placement policy beyond the existing worker claim/lease boundary;
+- OIDC, RBAC, and multi-tenant administration in the initial deployment.
 
 ## API Surface
 
 ```text
-GET    /v1/live/capabilities
+GET  /api/v1/live/capabilities
 
-POST   /v1/live/locations
-GET    /v1/live/locations/{locationId}
-PATCH  /v1/live/locations/{locationId}
+POST /api/v1/live/connectors
+GET  /api/v1/live/connectors
+GET  /api/v1/live/connectors/{connectorId}
+DELETE /api/v1/live/connectors/{connectorId}
 
-POST   /v1/live/sources
-GET    /v1/live/sources
-GET    /v1/live/sources/{sourceId}
-PATCH  /v1/live/sources/{sourceId}
-DELETE /v1/live/sources/{sourceId}
-
-POST   /v1/live/profiles
-GET    /v1/live/profiles
-GET    /v1/live/profiles/{profileId}/versions/{version}
-POST   /v1/live/profiles/{profileId}/versions
-
-POST   /v1/live/connectors
-GET    /v1/live/connectors
-GET    /v1/live/connectors/{connectorId}
-POST   /v1/live/connectors/{connectorId}/rotate-secret
-POST   /v1/live/connectors/{connectorId}/test
-
-POST   /v1/live/sessions
-GET    /v1/live/sessions
-GET    /v1/live/sessions/{sessionId}
-POST   /v1/live/sessions/{sessionId}/reconfigure
-POST   /v1/live/sessions/{sessionId}/stop
-GET    /v1/live/sessions/{sessionId}/generations
-GET    /v1/live/sessions/{sessionId}/appearances
-GET    /v1/live/sessions/{sessionId}/detections
-GET    /v1/live/sessions/{sessionId}/recordings
+POST /api/v1/live/sessions
+GET  /api/v1/live/sessions
+GET  /api/v1/live/sessions/{sessionId}
+POST /api/v1/live/sessions/{sessionId}/reconfigure
+POST /api/v1/live/sessions/{sessionId}/stop
 ```
 
-Admin authorization is required for profile publication, connector secret
-management, and placement constraints.
+All routes require the configured API key. Connector secrets and source URLs are
+write-only.
 
-## Source Choice
+## Source Contract
 
-Exactly one source variant is required:
+Exactly one source variant is required.
 
-```json
-{"source": {"sourceRef": "uuid"}}
-```
-
-or, for an authorized caller:
+### RTSP Pull
 
 ```json
 {
   "source": {
-    "inline": {
-      "type": "rtsp",
-      "uri": "write-only",
-      "locationRef": "uuid"
-    }
+    "type": "rtspPull",
+    "url": "rtsp://customer-mediamtx:8554/camera-1"
   }
 }
 ```
 
-Inline credentials are encrypted before the accepted response is returned.
+### WHEP Pull
 
-## Session Specification
+```json
+{
+  "source": {
+    "type": "whepPull",
+    "url": "wheps://customer-mediamtx.example/camera-1"
+  }
+}
+```
+
+### WHIP Push
+
+```json
+{
+  "source": {
+    "type": "whipPush"
+  }
+}
+```
+
+For pull sources, Mvision configures a generation-scoped MediaMTX path whose
+`source` is the supplied RTSP or WHEP URL. For push sources, the path uses
+`source: publisher` and the response includes a WHIP endpoint.
+
+All variants become this worker input:
+
+```text
+rtsp://mediamtx:8554/ingress/{opaqueGenerationPath}
+```
+
+The internal URL is never accepted from or returned to the caller.
+
+## Session Request
 
 ```json
 {
   "schemaVersion": 1,
-  "profileRef": {"profileId": "standard-live", "version": 3},
-  "source": {"sourceRef": "uuid"},
-  "analytics": {
+  "cameraId": "gate-1",
+  "location": {
+    "site": "office-a",
+    "area": "entrance",
+    "displayName": "Office A Entrance"
+  },
+  "profile": "face-recognition-v1",
+  "source": {
+    "type": "whipPush"
+  },
+  "processing": {
     "mode": "recognize",
-    "sampling": {"mode": "every_n_frames", "value": 1},
+    "sampling": {"mode": "everyNFrames", "value": 1},
     "detectorThreshold": 0.5,
     "recognitionThreshold": 0.62,
+    "anonymousThreshold": 0.7,
     "top2Margin": 0.05,
-    "alignment": {"mode": "five_point"},
-    "tracking": {"enabled": true, "maxGapSeconds": 1.5},
-    "unknownIdentity": {
-      "mode": "global_persistent",
-      "minimumEvidence": 3
-    }
+    "minimumIdentityEvidence": 3,
+    "trackGapMs": 1500,
+    "persistentAnonymous": true
   },
-  "appearance": {"enabled": true, "mergeGapSeconds": 2.0},
   "sourcePolicy": {
-    "latencyMs": 200,
-    "frameTimeoutSeconds": 5,
-    "reconnectIntervalSeconds": 10,
+    "latencyMs": 100,
+    "frameTimeoutMs": 5000,
+    "reconnectIntervalMs": 2000,
     "reconnectAttempts": -1
+  },
+  "json": {
+    "connectorRefs": ["connector-uuid"],
+    "persistFrames": true,
+    "frameRetention": "24h",
+    "appearanceSummary": {"enabled": false}
   },
   "recording": {
     "enabled": true,
-    "format": "fmp4",
     "segmentDuration": "15m",
     "retention": "7d"
   },
-  "results": {
-    "mode": "appearances_and_detections",
-    "connectorRefs": ["uuid", "uuid"]
-  },
   "annotatedStream": {
     "enabled": true,
-    "protocols": ["rtsp"],
-    "osd": {
-      "boundingBox": {
-        "enabled": true,
-        "colorMode": "identity_state",
-        "knownColor": "#00FF00",
-        "unknownColor": "#FF0000",
-        "lineWidth": 3
-      },
-      "landmarks": {"enabled": true, "color": "#FFFF00"},
-      "label": {
-        "enabled": true,
-        "fields": ["name", "cosine", "detector_confidence"]
-      }
-    }
-  },
-  "resources": {"resourceClass": "standard"}
+    "boundingBox": {"enabled": true, "lineWidth": 3},
+    "landmarks": {"enabled": true},
+    "labelFields": ["name", "status", "recognitionConfidence"]
+  }
 }
 ```
 
-## Typed Configuration And Validation
+`location` is an inline caller-owned snapshot rather than a separate first-release
+resource. It is optional and does not attempt to infer physical location.
 
-### Analytics Modes
+## Profiles And Overrides
 
-- `detect`: detector output only; alignment may be `none`.
-- `detect_track`: detector plus tracker; alignment may be `none`.
-- `recognize`: detector, tracker, quality, model-compatible five-point
-  alignment, embedding, and identity resolution.
-
-Recognition with `alignment=none` is rejected. The API must not run a known
-alignment-sensitive recognizer over unaligned crops while claiming recognition.
-
-### Dependencies
-
-- appearance requires tracking;
-- global anonymous identity requires recognition and quality evidence;
-- per-frame recognition output requires recognition mode;
-- OSD fields require annotated output;
-- identity-based colors require recognition output;
-- recording and annotated streaming are independent;
-- JSON-only sessions instantiate neither encoder nor annotated MediaMTX path.
-
-Unknown and contradictory fields are errors. No field is silently ignored.
-
-## Profile Resolution And Compilation
+The initial service owns a small set of immutable built-in profiles. A profile
+contains approved model and tracker artifacts plus safe defaults. The request may
+override only fields declared by capabilities.
 
 ```text
-platform defaults
-  + exact immutable profile version
-  + validated request overrides
-  = immutable resolved generation spec
+built-in profile version
+  + validated typed overrides
+  = immutable resolved generation configuration
 ```
 
-The compiler maps typed values to internal artifact references and a versioned
-`StartCommand`. It allocates internal paths and ports; callers never do.
+The generated native command contains resolved internal values. The caller never
+selects model files, GPU IDs, sockets, MediaMTX paths, or output ports.
 
-The generation stores:
+### Processing Dependencies
 
-- requested spec without secrets;
-- resolved spec without secrets;
-- exact profile and connector versions;
-- model/config artifact hashes;
-- capability document version;
-- SHA-256 of the canonical resolved spec.
+- `detect` produces boxes, landmarks, and detector confidence;
+- `detectTrack` additionally produces local tracker IDs;
+- `recognize` requires tracking, quality evidence, five-point alignment, ArcFace,
+  and identity resolution;
+- persistent anonymous identity requires `recognize`;
+- appearance summary requires tracking and a configured track gap;
+- identity labels/colors require `recognize`;
+- disabling recording and annotated output creates neither media branch;
+- every selected processing mode still emits one frame JSON per processed frame.
 
-## Capabilities Contract
+Recognition alignment is not caller-selectable in v1. This removes the invalid
+`recognize + alignment:none` state rather than exposing a switch that has only one
+correct value.
 
-`GET /v1/live/capabilities` returns:
+## Capabilities
 
-- supported session schema versions;
-- analytics, alignment, tracker, and sampling modes;
-- approved model/profile IDs and versions;
-- numeric bounds and defaults;
-- field dependency matrix;
-- recording formats and duration bounds;
-- result granularity and connector types;
-- annotated output protocols and OSD fields;
-- resource classes;
-- deprecated fields and removal versions.
+`GET /api/v1/live/capabilities` returns a small cacheable document containing:
 
-The response is cacheable and version identified. A client can validate forms or
-requests without duplicating server rules.
+- session schema versions;
+- available built-in profiles and exact profile versions;
+- source types;
+- processing and sampling modes;
+- allowed override fields, bounds, and defaults;
+- connector types;
+- recording duration/retention bounds;
+- annotated OSD fields and viewer protocols;
+- current maximum concurrent session count.
+
+It is discovery, not a profile management API.
 
 ## Lifecycle
 
 ```text
-ACCEPTED -> ASSIGNED -> STARTING -> ACTIVE
-                           |          |
-                           v          v
-                        FAILED   RECONFIGURING
-                                      |
-                                  generation+1
-                                      |
-                                   STARTING
+ACCEPTED
+   -> PROVISIONING_MEDIA
+        -> WAITING_FOR_SOURCE   # WHIP or temporarily unavailable pull source
+             -> STARTING
+                  -> ACTIVE
+                       -> RECONNECTING -> ACTIVE
+                       -> STOPPING -> STOPPED
+                  -> FAILED
 ```
 
-Additional terminal/transient states: `REJECTED`, `DEGRADED`, `STOPPING`, and
-`STOPPED`.
+The public response maps internal `PROVISIONING_MEDIA` into `STARTING` to retain
+the documented state vocabulary.
 
-`POST /reconfigure` validates and persists the next generation before stopping
-the active one. It does not rewrite old results. A failed replacement is visible
-as a failed generation with a stable code; history remains intact.
+Session creation persists desired state before provisioning. A pull path may
+connect immediately. A push path returns while waiting and starts processing
+automatically when MediaMTX reports the publisher ready.
 
-## Response Contract
+## Generation And Reconfiguration
+
+The session owns caller intent and history. Each generation stores:
+
+- immutable requested request body without secrets;
+- immutable resolved processing configuration;
+- source type and encrypted source secret version;
+- camera and location snapshot;
+- built-in profile ID/version and artifact hashes;
+- connector IDs/configuration versions;
+- opaque ingress and optional annotated path IDs;
+- configuration hash;
+- desired and runtime state.
+
+`POST /reconfigure` validates and stores generation `N+1` before stopping `N`.
+Old frame and appearance results remain attributed to their original generation.
+A failed replacement is visible and never rewrites generation `N` results.
+
+## MediaMTX Controller
+
+The controller uses the internal Control API:
+
+```text
+POST   /v3/config/paths/add/{name}
+PATCH  /v3/config/paths/patch/{name}
+DELETE /v3/config/paths/delete/{name}
+GET    /v3/config/paths/get/{name}
+GET    /v3/paths/get/{name}
+```
+
+Control API changes are runtime-only. The controller therefore reconciles
+PostgreSQL desired generations against MediaMTX after either side restarts.
+
+Rules:
+
+- paths use opaque generation identifiers rather than names or locations;
+- source credentials never appear in path names or controller logs;
+- retries are idempotent and distinguish already-exists from incompatible state;
+- a path is input-ready only when the active Paths API reports a readable stream;
+- stale paths with no desired generation are removed after a bounded grace period;
+- the Control API is available only on the internal network.
+
+## Response
+
+### Push Session Waiting For Source
 
 ```json
 {
   "sessionId": "uuid",
-  "generation": 4,
-  "state": "ACTIVE",
-  "specHash": "sha256",
+  "generation": 1,
+  "state": "WAITING_FOR_SOURCE",
+  "profile": {"id": "face-recognition-v1", "version": 1},
+  "ingest": {
+    "type": "whipPush",
+    "publishUrl": "https://media.example/opaque-path/whip"
+  },
   "links": {
-    "appearances": "/v1/live/sessions/uuid/appearances",
-    "detections": "/v1/live/sessions/uuid/detections",
-    "recordings": "/v1/live/sessions/uuid/recordings"
+    "frames": "/api/v1/live/sessions/uuid/frames",
+    "appearances": "/api/v1/live/sessions/uuid/appearances",
+    "recordings": "/api/v1/live/sessions/uuid/recordings"
   },
   "outputs": {
+    "recording": {"state": "waitingForSource"},
+    "annotatedStream": {"state": "waitingForSource", "urls": {}}
+  }
+}
+```
+
+### Active Session
+
+```json
+{
+  "sessionId": "uuid",
+  "generation": 1,
+  "state": "ACTIVE",
+  "ingest": {"type": "whipPush"},
+  "outputs": {
+    "recording": {"state": "recording"},
     "annotatedStream": {
       "state": "ready",
-      "urls": {"rtsp": "rtsp://trusted-host/path"}
+      "urls": {
+        "rtsp": "rtsp://media.example/annotated/opaque-path",
+        "webrtc": "https://media.example/annotated/opaque-path"
+      }
     }
   }
 }
 ```
 
-Media URLs are absent until the downstream path is verified ready.
+The write-only WHIP publish URL may be returned only at creation or explicit
+rotation according to deployment policy. Pull URLs are never returned.
 
-## Persistence
+## Persistence Changes
 
-Additive business entities:
+The minimal business model contains:
 
-- `live_location`;
-- `live_camera_source`;
-- `live_pipeline_profile` and immutable profile version;
-- `live_connector` and immutable connector configuration version;
-- `live_session`;
-- `live_session_generation`;
-- session transition/audit history.
+- `live_session` for stable caller intent and current generation;
+- `live_session_generation` for immutable requested/resolved configuration and
+  runtime state;
+- `live_connector` for registered destination configuration and encrypted secret;
+- transition history sufficient for recovery and diagnosis.
 
-Secrets use encrypted columns or external secret references and never participate
-in the spec hash.
+Existing `live_camera` and `live_camera_run` behavior may be migrated into these
+entities rather than duplicated indefinitely. Existing lease fencing remains the
+runtime ownership mechanism.
 
-## Error Vocabulary
+## Stable Errors
 
-- `SESSION_SPEC_FIELD_UNKNOWN`;
-- `SESSION_SPEC_INCOMPATIBLE`;
-- `CAPABILITY_NOT_AVAILABLE`;
-- `PROFILE_VERSION_NOT_FOUND`;
-- `CONNECTOR_VERSION_NOT_FOUND`;
-- `SOURCE_NOT_FOUND`;
-- `SOURCE_CREDENTIAL_INVALID`;
-- `SESSION_CAPACITY_EXHAUSTED`;
-- `SESSION_GENERATION_CONFLICT`;
-- `SESSION_START_FAILED`;
-- `SESSION_RECONFIGURE_FAILED`.
+- `LIVE_SESSION_SPEC_INVALID`;
+- `LIVE_SOURCE_TYPE_UNSUPPORTED`;
+- `LIVE_SOURCE_CREDENTIAL_INVALID`;
+- `LIVE_PROFILE_NOT_FOUND`;
+- `LIVE_CONNECTOR_NOT_FOUND`;
+- `LIVE_MEDIA_PATH_FAILED`;
+- `LIVE_SOURCE_TIMEOUT`;
+- `LIVE_CAPACITY_EXHAUSTED`;
+- `LIVE_GENERATION_CONFLICT`;
+- `LIVE_START_FAILED`;
+- `LIVE_RECONFIGURE_FAILED`.
 
 ## Acceptance
 
+- OpenAPI rejects unknown and incompatible fields;
 - profile resolution is deterministic and hash stable;
-- every supported/forbidden combination is contract tested;
-- recognition without five-point alignment is rejected;
-- inline and durable source variants compile equivalently;
-- idempotency keys do not duplicate sessions;
-- JSON-only compiled graphs contain no encoder/output allocation;
-- annotated specs contain only declared OSD fields;
-- reconfiguration increments generation and preserves history;
-- secrets are absent from OpenAPI examples, responses, logs, traces, metrics,
-  commands, and hashes;
-- restart reconstructs durable desired session state and exact generation;
-- no old fixed port/path/GPU field remains a caller-visible requirement.
+- RTSP pull and WHEP pull become readable internal RTSP paths;
+- WHIP push returns a publish URL and auto-starts after publication;
+- no source secret is returned or logged;
+- MediaMTX restart recreates every desired path;
+- stale and incompatible MediaMTX paths are reconciled safely;
+- stop/reconfigure is idempotent and generation fenced;
+- reconfigure preserves old results and replaces media paths cleanly;
+- JSON-only, recording, annotated, and combined specs compile into the expected
+  distinct graph/output configuration;
+- API-key rejection and acceptance are contract tested;
+- no legacy fixed public port or caller-selected GPU field remains in the API.

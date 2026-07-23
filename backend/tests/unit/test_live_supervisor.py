@@ -1,6 +1,7 @@
 import asyncio
 import time
 from collections import deque
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -32,16 +33,20 @@ from tests.unit.test_live_identity_service import _event
 
 CAMERA_ID = "019b0000-0000-7000-8000-000000000001"
 RUN_ID = "019b0000-0000-7000-8000-000000000002"
+SESSION_ID = "019b0000-0000-7000-8000-000000000004"
+GENERATION_ID = "019b0000-0000-7000-8000-000000000005"
 TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 
 
 def _header(message_type: str, sequence: int, generation: int = 1) -> ProtocolHeader:
     return ProtocolHeader(
-        1,
+        2,
         message_type,
+        CAMERA_ID,
         CAMERA_ID,
         RUN_ID,
         generation,
+        1,
         sequence,
         TRACEPARENT,
         None,
@@ -136,6 +141,102 @@ class _Cipher:
         return SecretStr("rtsp://admin:secret@camera.invalid/live")
 
 
+def _session_run(runtime_attempt: int = 1):
+    return SimpleNamespace(
+        run_id=RUN_ID,
+        generation_id=GENERATION_ID,
+        runtime_attempt=runtime_attempt,
+        runtime_state="STARTING",
+    )
+
+
+def _generation():
+    return SimpleNamespace(
+        generation_id=GENERATION_ID,
+        session_id=SESSION_ID,
+        generation=3,
+        ingress_path="ingress/opaque-generation",
+        desired_state="running",
+        profile_version=4,
+        source_ciphertext="encrypted-upstream-secret",
+        resolved_spec={
+            "processing": {
+                "mode": "recognize",
+                "sampling_mode": "everyNFrames",
+                "sampling_value": 2.0,
+                "detector_threshold": 0.5,
+                "recognition_threshold": 0.62,
+                "top2_margin": 0.05,
+                "track_gap_ms": 1500,
+            },
+            "source_policy": {
+                "latency_ms": 100,
+                "frame_timeout_ms": 5000,
+                "reconnect_interval_ms": 2000,
+                "reconnect_attempts": -1,
+            },
+            "recording": {"enabled": False},
+            "annotated_stream": {"enabled": False},
+        },
+    )
+
+
+class _SessionRuns:
+    def __init__(self, claims):
+        self.claims = deque(claims)
+        self.generation = _generation()
+        self.states: list[dict] = []
+        self.finishes: list[dict] = []
+        self.renew_count = 0
+
+    async def claim_generation(self, session, *args, **kwargs):
+        return self.claims.popleft() if self.claims else None
+
+    async def get_generation(self, session, generation_id):
+        assert generation_id == GENERATION_ID
+        return self.generation
+
+    async def update_run_state(self, session, *args, **kwargs):
+        self.states.append(kwargs)
+        return True
+
+    async def renew_run(self, session, *args, **kwargs):
+        self.renew_count += 1
+        return True
+
+    async def finish_run(self, session, *args, **kwargs):
+        self.finishes.append(kwargs)
+        return True
+
+
+class _SessionCompletedRunner:
+    def __init__(self):
+        self.starts = []
+
+    async def run(self, start, on_event, commands):
+        self.starts.append(start)
+        state = StateEvent(
+            replace(start.header, message_type="state", sequence=10),
+            "ACTIVE",
+            "first_frame",
+        )
+        result = on_event(state)
+        if asyncio.iscoroutine(result):
+            await result
+        stopped = StoppedEvent(
+            replace(start.header, message_type="stopped", sequence=11),
+            4,
+            1,
+            0,
+            True,
+            "operator",
+        )
+        result = on_event(stopped)
+        if asyncio.iscoroutine(result):
+            await result
+        return stopped
+
+
 class _CompletedRunner:
     def __init__(self):
         self.starts = []
@@ -200,9 +301,7 @@ class _WaitingRunner:
     async def run(self, start, on_event, commands):
         try:
             self.command = await commands.get()
-            stopped = StoppedEvent(
-                _header("stopped", 12), 0, 0, 0, True, "desired_stopped"
-            )
+            stopped = StoppedEvent(_header("stopped", 12), 0, 0, 0, True, "desired_stopped")
             result = on_event(stopped)
             if asyncio.iscoroutine(result):
                 await result
@@ -249,6 +348,19 @@ def _supervisor(
         metrics=metrics,
         session_factory=sessions,
         monitor_interval_seconds=interval,
+    )
+
+
+def _session_supervisor(session_runs, runner, sessions) -> LiveSupervisor:
+    return LiveSupervisor(
+        _settings(),
+        _Cameras(),
+        _Runs([]),
+        _Cipher(),
+        runner,
+        session_repository=session_runs,
+        session_factory=sessions,
+        monitor_interval_seconds=0.01,
     )
 
 
@@ -303,21 +415,18 @@ async def test_worker_trace_tree_preserves_parent_and_native_duration() -> None:
     assert spans["live.supervisor.claim"].parent is not None
     assert spans["live.supervisor.claim"].parent.span_id == int("00f067aa0ba902b7", 16)
     assert spans["live.camera.run"].parent is not None
-    assert spans["live.camera.run"].parent.span_id == spans[
-        "live.supervisor.claim"
-    ].context.span_id
+    assert spans["live.camera.run"].parent.span_id == spans["live.supervisor.claim"].context.span_id
     assert spans["live.native.source_connect"].parent is not None
-    assert spans["live.native.source_connect"].parent.span_id == spans[
-        "live.camera.run"
-    ].context.span_id
+    assert (
+        spans["live.native.source_connect"].parent.span_id
+        == spans["live.camera.run"].context.span_id
+    )
     assert (
         spans["live.native.source_connect"].end_time
         - spans["live.native.source_connect"].start_time
         == 25_000_000
     )
-    assert 'operation="source_connect",status="success"' in metrics.render_metrics()[
-        0
-    ].decode()
+    assert 'operation="source_connect",status="success"' in metrics.render_metrics()[0].decode()
     telemetry.shutdown(1_000)
 
 
@@ -452,9 +561,9 @@ async def test_complete_semantic_trace_tree_has_exact_operation_boundaries() -> 
         "live.notification.publish",
     }
     assert spans["live.supervisor.claim"].parent is not None
-    assert spans["live.supervisor.claim"].parent.span_id == spans[
-        "http.camera.start"
-    ].context.span_id
+    assert (
+        spans["live.supervisor.claim"].parent.span_id == spans["http.camera.start"].context.span_id
+    )
     run_span_id = spans["live.camera.run"].context.span_id
     for name in (
         "live.native.source_connect",
@@ -467,9 +576,9 @@ async def test_complete_semantic_trace_tree_has_exact_operation_boundaries() -> 
         assert spans[name].parent is not None
         assert spans[name].parent.span_id == run_span_id
     assert spans["live.qdrant.search"].parent is not None
-    assert spans["live.qdrant.search"].parent.span_id == spans[
-        "live.identity.resolve"
-    ].context.span_id
+    assert (
+        spans["live.qdrant.search"].parent.span_id == spans["live.identity.resolve"].context.span_id
+    )
     telemetry.shutdown(1_000)
 
 
@@ -483,14 +592,85 @@ async def test_returns_false_without_a_camera_claim() -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_claim_builds_safe_resolved_start_command() -> None:
+    sessions = _Sessions()
+    session_runs = _SessionRuns([_session_run(runtime_attempt=2)])
+    runner = _SessionCompletedRunner()
+
+    assert await _session_supervisor(session_runs, runner, sessions).process_one_session("worker-1")
+
+    start = runner.starts[0]
+    assert start.uri == "rtsp://mediamtx:8554/ingress/opaque-generation"
+    assert start.header.session_id == SESSION_ID
+    assert start.header.run_id == RUN_ID
+    assert start.header.generation == 3
+    assert start.header.runtime_attempt == 2
+    assert start.profile_version == 4
+    assert start.analytics_mode == "recognize"
+    assert start.sample_every_n == 2
+    assert start.detector_threshold == 0.5
+    assert start.recognition_threshold == 0.62
+    assert start.top2_margin == 0.05
+    assert start.track_gap_ns == 1_500_000_000
+    assert start.latency_ms == 100
+    assert start.reconnect_interval_seconds == 2
+    assert start.frame_timeout_ns == 5_000_000_000
+    assert start.recording_enabled is False
+    assert start.annotated_enabled is False
+    assert "encrypted-upstream-secret" not in repr(start)
+    assert session_runs.states[-1]["runtime_state"] == "ACTIVE"
+    assert session_runs.finishes[-1]["runtime_state"] == "STOPPED"
+
+
+@pytest.mark.asyncio
+async def test_session_retry_preserves_generation_and_increments_runtime_attempt() -> None:
+    session_runs = _SessionRuns([_session_run(runtime_attempt=1), _session_run(runtime_attempt=2)])
+    runner = _SessionCompletedRunner()
+    supervisor = _session_supervisor(session_runs, runner, _Sessions())
+
+    assert await supervisor.process_one_session("worker-1")
+    assert await supervisor.process_one_session("worker-1")
+
+    assert [start.header.generation for start in runner.starts] == [3, 3]
+    assert [start.header.runtime_attempt for start in runner.starts] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_session_rejects_stale_runtime_attempt_before_persistence() -> None:
+    class _StaleRunner:
+        async def run(self, start, on_event, commands):
+            event = StateEvent(
+                replace(
+                    start.header,
+                    message_type="state",
+                    runtime_attempt=start.header.runtime_attempt - 1,
+                    sequence=10,
+                ),
+                "ACTIVE",
+                None,
+            )
+            result = on_event(event)
+            if asyncio.iscoroutine(result):
+                await result
+            return None
+
+    session_runs = _SessionRuns([_session_run(runtime_attempt=2)])
+
+    assert await _session_supervisor(session_runs, _StaleRunner(), _Sessions()).process_one_session(
+        "worker-1"
+    )
+
+    assert session_runs.states == []
+    assert session_runs.finishes == []
+
+
+@pytest.mark.asyncio
 async def test_claims_runs_native_and_persists_fenced_events() -> None:
     sessions = _Sessions()
     runs = _Runs([_run()])
     runner = _CompletedRunner()
 
-    assert await _supervisor(runs, _Cameras(), runner, sessions).process_one_camera(
-        "worker-1"
-    )
+    assert await _supervisor(runs, _Cameras(), runner, sessions).process_one_camera("worker-1")
 
     assert runner.starts[0].uri == "rtsp://admin:secret@camera.invalid/live"
     assert runner.starts[0].header.generation == 1
@@ -528,9 +708,7 @@ async def test_desired_stop_enqueues_stop_command() -> None:
     runner = _WaitingRunner()
     cameras = _Cameras(("running", "stopped"))
 
-    assert await _supervisor(runs, cameras, runner, sessions).process_one_camera(
-        "worker-1"
-    )
+    assert await _supervisor(runs, cameras, runner, sessions).process_one_camera("worker-1")
 
     assert isinstance(runner.command, StopCommand)
     assert runner.command.reason == "desired_stopped"
@@ -543,9 +721,7 @@ async def test_lost_lease_cancels_child_and_abandons_terminal_mutation() -> None
     runs.renew_result = False
     runner = _WaitingRunner()
 
-    assert await _supervisor(runs, _Cameras(), runner, sessions).process_one_camera(
-        "worker-1"
-    )
+    assert await _supervisor(runs, _Cameras(), runner, sessions).process_one_camera("worker-1")
 
     assert runner.cancelled
     assert runs.finishes == []
@@ -557,9 +733,9 @@ async def test_fenced_event_rejection_cancels_lease_monitor() -> None:
     runs = _Runs([_run()])
     runs.state_result = False
 
-    assert await _supervisor(
-        runs, _Cameras(), _CompletedRunner(), sessions
-    ).process_one_camera("worker-1")
+    assert await _supervisor(runs, _Cameras(), _CompletedRunner(), sessions).process_one_camera(
+        "worker-1"
+    )
     renewals_at_return = runs.renew_count
     await asyncio.sleep(0.03)
 
@@ -606,7 +782,16 @@ async def test_track_evidence_is_resolved_off_callback_and_enqueues_assignment()
     evidence = _event((1.0, 0.0))
     assignment = IdentityAssignment(
         ProtocolHeader(
-            1, "identity_assignment", CAMERA_ID, RUN_ID, 1, 20, TRACEPARENT, None
+            2,
+            "identity_assignment",
+            CAMERA_ID,
+            CAMERA_ID,
+            RUN_ID,
+            1,
+            1,
+            20,
+            TRACEPARENT,
+            None,
         ),
         42,
         1,
@@ -637,9 +822,7 @@ async def test_track_evidence_is_resolved_off_callback_and_enqueues_assignment()
             result = on_event(evidence)
             if asyncio.iscoroutine(result):
                 await result
-            stopped = StoppedEvent(
-                _header("stopped", 21), 1, 1, 0, True, "operator"
-            )
+            stopped = StoppedEvent(_header("stopped", 21), 1, 1, 0, True, "operator")
             result = on_event(stopped)
             if asyncio.iscoroutine(result):
                 await result

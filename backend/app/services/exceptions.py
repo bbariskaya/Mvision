@@ -1,4 +1,6 @@
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 
@@ -82,7 +84,37 @@ class LiveCameraError(ServiceError):
         super().__init__(message, message, error_code, status_code)
 
 
+class LiveSessionError(ServiceError):
+    def __init__(self, message: str, error_code: str, status_code: int):
+        super().__init__(message, message, error_code, status_code)
+
+
+class LiveConnectorError(ServiceError):
+    def __init__(self, message: str, error_code: str, status_code: int):
+        super().__init__(message, message, error_code, status_code)
+
+
 def add_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_error_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        if not request.url.path.startswith("/api/v1/live/"):
+            return await request_validation_exception_handler(request, exc)
+        code = (
+            "LIVE_CONNECTOR_SPEC_INVALID"
+            if request.url.path.startswith("/api/v1/live/connectors")
+            else "LIVE_SESSION_SPEC_INVALID"
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "code": code,
+                "message": "Invalid live request.",
+                "processId": None,
+            },
+        )
+
     @app.exception_handler(ServiceError)
     async def service_error_handler(request: Request, exc: ServiceError) -> JSONResponse:
         if isinstance(exc, LiveCameraError):

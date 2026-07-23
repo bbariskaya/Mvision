@@ -36,12 +36,13 @@ namespace {
 constexpr const char* kCameraId = "019b0000-0000-7000-8000-000000000001";
 constexpr const char* kRunId = "019b0000-0000-7000-8000-000000000002";
 constexpr const char* kFaceId = "019b0000-0000-7000-8000-000000000003";
+constexpr const char* kSessionId = "019b0000-0000-7000-8000-000000000004";
 constexpr const char* kTraceparent =
     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 
 mvision::ProtocolHeader header(std::string type, std::uint64_t sequence) {
-  return {mvision::kLiveProtocolVersion, std::move(type), kCameraId, kRunId,
-          1, sequence, kTraceparent, std::nullopt};
+  return {mvision::kLiveProtocolVersion, std::move(type), kSessionId, kCameraId,
+          kRunId, 1, 1, sequence, kTraceparent, std::nullopt};
 }
 
 struct WorkerProcess {
@@ -201,8 +202,9 @@ struct WorkerProcess {
 mvision::StartCommand start_command(int gpu_id, const std::string& uri,
                                     char** argv) {
   return {header("start", 1), uri, static_cast<std::uint32_t>(gpu_id),
-          argv[3], argv[5], argv[6], argv[4], "/live/test", 5400, 8554, 200, 2,
-          -1, 2'000'000'000};
+          argv[3], argv[5], argv[6], argv[4], "/live/test", 5400, 8554,
+          1, "recognize", 1, 0.5, 0.62, 0.05, 1'500'000'000, 200, 2, -1,
+          2'000'000'000, false, false};
 }
 
 void expect_state(WorkerProcess& worker, const std::string& expected) {

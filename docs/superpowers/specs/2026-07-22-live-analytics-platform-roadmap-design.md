@@ -1,180 +1,206 @@
 # Live Analytics Platform Roadmap Design
 
-**Status:** Draft for user review  
-**Date:** 2026-07-22
+**Status:** Approved direction
+**Revised:** 2026-07-23
 
 ## Product Outcome
 
-Mvision evolves from a fixed single-camera process into a configurable live
-analytics platform. Callers can create sessions from durable or inline camera
-sources, select typed analytics behavior, receive durable JSON results through
-pull/Webhook/Kafka, optionally request an annotated stream URL, and later run
-multiple isolated camera sessions.
+Mvision accepts a live stream through a typed API, analyzes selected frames with
+the existing DeepStream face pipeline, and emits JSON for every processed frame.
+Each frame result contains original-pixel bounding boxes, five landmarks, local
+track state, identity state, and confidence values.
 
-The primary result remains person appearance history: who appeared at which
-caller-provided camera/location, in which UTC intervals, and for how long.
+Callers may additionally request person appearance summaries, 15-minute source
+recordings, and an annotated RTSP/WebRTC stream. Multi-camera execution begins
+with isolated per-session processes rather than a shared dynamic pipeline.
+
+## Architecture
+
+```text
+Customer MediaMTX or RTSP source
+  -> RTSP/WHEP pull or WHIP push
+  -> Mvision MediaMTX generation ingress
+       -> optional raw fMP4 recording
+       -> internal RTSP
+            -> isolated DeepStream worker
+                 -> frame.result JSON for every processed frame
+                 -> optional appearance aggregation
+                 -> direct Webhook/Kafka delivery
+                 -> asynchronous PostgreSQL persistence
+                 -> optional OSD/encoder
+                      -> Mvision MediaMTX annotated path
+                      -> RTSP + WebRTC viewer URLs
+```
+
+MediaMTX normalizes caller-facing media protocols. DeepStream consumes one
+internal RTSP contract for all source variants.
 
 ## Locked Decisions
 
-- Existing hardcoded camera/start behavior does not require backward
-  compatibility.
-- Runtime configuration uses typed fields and versioned profiles.
-- Arbitrary GStreamer properties, config paths, and shell commands are forbidden.
-- Normal session requests use registered `connectorRef` values.
-- Durable and authorized inline camera sources are both supported.
-- Reconfiguration creates a new immutable generation and controlled restart.
-- Realtime appearance results are authoritative.
-- MediaMTX recording is durable evidence/replay, not the primary result.
-- Unknown persons can become global persistent anonymous identities after
-  bounded evidence and duplicate checks.
-- Pull API, Webhook, and Kafka are required delivery modes.
-- Annotated output is optional and must not exist for JSON-only sessions.
-- Multi-camera starts with isolated per-camera pipelines; batching is later.
+- Frame JSON is the default result; appearance summaries are optional.
+- Every processed frame emits exactly one `frame.result`, including no-face
+  frames with `faces: []`.
+- Processing cadence is controlled by typed sampling configuration.
+- Geometry is returned in original source-frame pixels.
+- The supported source variants are `rtspPull`, `whepPull`, and `whipPush`.
+- A push session returns a WHIP publish URL and waits for media automatically.
+- Session configuration uses built-in versioned profiles plus typed overrides.
+- Arbitrary GStreamer properties, model paths, GPU arguments, ports, and shell
+  commands are forbidden.
+- Recognition always uses five-point alignment.
+- Tracker IDs are generation-local; known and persistent anonymous `faceId`
+  values are global.
+- Direct connector delivery is the low-latency path. Persistence is separate and
+  asynchronous; Webhook delivery does not claim crash-safe at-least-once.
+- Connector destinations are registered and referenced by `connectorRef`.
+- Recording is optional, records the unannotated ingress, and defaults to
+  15-minute fMP4 segments when enabled.
+- Annotated output is optional and returns simple RTSP and WebRTC URLs.
+- Reconfiguration creates an immutable generation and controlled restart.
+- Initial multi-camera execution uses one native process per active session.
+- API authentication uses a deployment API key; OIDC/RBAC is deferred.
 
-## Phase Order
+## Delivery 1: Session API And Media Ingress
 
-### Phase 1: Live Requirements And Contract Freeze
+Deliver:
 
-Deliverables:
+- `POST /api/v1/live/sessions` with typed source, profile, overrides, location,
+  and output selection;
+- session get/list/stop/reconfigure and capability discovery;
+- simple API-key authentication;
+- MediaMTX path controller for RTSP pull, WHEP pull, and WHIP push;
+- generation-scoped internal RTSP paths;
+- `WAITING_FOR_SOURCE`, start, active, reconnect, stop, and failure state;
+- PostgreSQL desired state and MediaMTX reconciliation after restart;
+- compiled generation configuration passed through a versioned native command.
 
-- `requirements/live-streaming-requirements.md`;
-- appearance, source-time, location, recording-evidence, session, output, and
-  connector vocabulary;
-- explicit differences between bounded uploaded video and unbounded live input.
+Gate:
 
-Gate: all later specs use the same field semantics and failure vocabulary.
+- all three source contracts pass against MediaMTX fixtures;
+- push publication requires no manual worker restart;
+- reconnect and MediaMTX restart recover without false `ACTIVE` state;
+- no secret appears in responses, logs, traces, metrics, or process arguments.
 
-### Phase 2: Configurable Camera Session API
+## Delivery 2: Frame JSON And Optional Appearance
 
-Deliverables:
+Deliver:
 
-- capability discovery;
-- caller-owned locations;
-- durable and inline sources;
-- versioned pipeline profiles;
-- registered connector references;
-- immutable session generations;
-- typed overrides and dependency validation;
-- replacement of hardcoded global runtime behavior.
+- separate stream PTS and observed UTC semantics;
+- one `frame.result` per processed frame;
+- original-pixel bbox and landmark output;
+- local track lifecycle with native expiry events;
+- known, pending, unknown, anonymous, and new-anonymous transitions;
+- global persistent anonymous creation/reuse under quality gates;
+- optional appearance started/ended aggregation;
+- direct Webhook/Kafka dispatch through registered connectors;
+- independent asynchronous PostgreSQL persistence and pull APIs;
+- bounded connector backpressure and observable frame drops/rejections.
 
-Gate: JSON-only and annotated session specs compile deterministically into
-different internal pipeline graphs.
+Gate:
 
-### Phase 3: MediaMTX Recording And Realtime Appearance
+- deterministic fixtures prove frame count, frame order, empty frames, geometry,
+  identity transitions, track expiry, and optional duration summaries;
+- slow/offline connectors do not reduce inference progress;
+- event IDs remain stable across in-process retry;
+- no embedding or aligned crop enters external JSON.
 
-Deliverables:
+## Delivery 3: Optional Media Outputs
 
-- generation-scoped MediaMTX ingress paths;
-- absolute timestamp propagation;
-- 15-minute fMP4 recording;
-- MinIO segment/index storage and PostgreSQL manifests;
-- known/global-anonymous realtime appearance intervals;
-- exact sample evidence linkage;
-- fast and real-duration E2E harnesses.
+Deliver:
 
-Gate: deterministic fixture appearance results and zero-frame evidence match.
+- optional raw ingress recording through MediaMTX;
+- 15-minute production fMP4 segmentation and shorter test segmentation;
+- completed-segment metadata, persistent retention, and optional MinIO upload;
+- optional OSD/encoder/publisher graph;
+- typed bbox, landmark, color, line-width, and label controls;
+- generation-scoped annotated MediaMTX path;
+- ready-state RTSP and WebRTC URLs;
+- independent recording and annotated-output failure state.
 
-### Phase 4: Durable JSON Result Delivery
+Gate:
 
-Deliverables:
+- JSON-only sessions instantiate no recording or annotated branch;
+- one real 15-minute recording rollover finalizes successfully;
+- viewer stall and publisher restart do not stop JSON or inference;
+- output URLs are absent until MediaMTX reports a readable path.
 
-- canonical event envelopes;
-- PostgreSQL outbox;
-- pull result APIs;
-- Webhook and Kafka adapters;
-- retry, replay, ordering, and dead-letter state.
+## Delivery 4: Isolated Multi-Camera
 
-Gate: connector outages do not stop analytics and all accepted events remain
-recoverable.
+Deliver:
 
-### Phase 5: Optional Annotated Media Output
+- removal of the single-running-camera database constraint;
+- removal of fixed public worker RTSP ports;
+- fixed-size worker pool using existing PostgreSQL claim/lease fencing;
+- one isolated native process per active session;
+- configured concurrent-session admission limit;
+- session-scoped paths, connector queues, recording roots, and metrics;
+- independent restart and teardown.
 
-Deliverables:
+Gate:
 
-- typed OSD configuration;
-- conditional encoder/media graph;
-- generation-scoped MediaMTX annotated paths;
-- RTSP first, with HLS/WebRTC exposed only through declared capabilities;
-- ready-state URL publication and viewer isolation.
+- at least three simultaneous fixture cameras remain isolated;
+- killing, disconnecting, or stalling one session does not change another;
+- capacity is rejected before GPU work rather than failing with OOM;
+- repeated concurrent start/stop has bounded threads, file descriptors, request
+  pads, sockets, and GPU memory.
 
-Gate: JSON-only sessions instantiate no output branch; annotated sessions stream
-without blocking inference.
+## Existing Code Reused
 
-### Phase 6: Multi-Camera Scheduler
+- `backend/pipeline/src/live_pipeline.cpp`: DeepStream detector, tracker,
+  alignment, ArcFace, quality evidence, reconnect, and OSD foundations;
+- `backend/app/services/live_identity_service.py`: temporal identity state;
+- `backend/app/services/video_identity_voting_service.py`: threshold and top-2
+  margin concepts, extended for anonymous matching;
+- `backend/app/services/live_supervisor.py`: run claiming, lease fencing, native
+  lifecycle, and command/event transport;
+- PostgreSQL, Qdrant, and MinIO as existing persistence boundaries.
 
-Deliverables:
+## Required Corrections Before Expansion
 
-- worker capability and heartbeat registry;
-- GPU/resource leases;
-- placement, quotas, and admission control;
-- per-session process isolation and recovery;
-- camera-scoped ports/paths removed in favor of allocated resources.
+- PTS is currently treated as Unix time and must be separated from observed UTC.
+- Native track expiry is defined in the protocol but is not emitted.
+- Live unknown results currently have no global anonymous `faceId`.
+- The native graph currently always creates its encoder/RTSP output branch.
+- A full identity queue currently drops critical evidence events.
+- One database index permits only one running camera.
+- Worker output uses fixed UDP/RTSP ports and an embedded RTSP server.
 
-Gate: concurrent cameras remain fenced and one failure cannot corrupt another.
+## Reference Adoption
 
-### Phase 7: Platform Hardening And SDK
+| Reference | Adopt | Do not adopt |
+|---|---|---|
+| WJLI DeepStream ReID | source-scoped metadata, tee and nonblocking fast-path concepts | per-frame embeddings, silent ZMQ loss, simple global-ID gallery |
+| Yakhyo YOLOv8 Face | detector/landmark/NMS parity fixtures | Python ONNX data plane |
+| gst-nvinfer-custom | landmark metadata and alignment diagnostics | replacement of NVIDIA system libraries |
+| DeepStream-Yolo-Face | current DeepStream parser/export/config comparison | demo application architecture |
+| Abdirayimov multi-stream | batched alignment/encoding and dynamic-source tests | shared pipeline before isolated-camera acceptance |
+| Limitless surveillance | simple control API ergonomics and task isolation | OpenCV capture and Celery video data plane |
 
-Deliverables:
-
-- authentication, RBAC, tenant isolation, and audit;
-- connector secret rotation and SSRF policy;
-- retention/reconciliation controls;
-- version compatibility and deprecation policy;
-- generated clients/SDK;
-- load, soak, upgrade, and disaster-recovery evidence.
-
-Gate: published API version has reproducible security, compatibility, and
-operational acceptance evidence.
-
-## Cross-Phase Architecture
-
-```text
-Caller
-  -> Live API / Session Controller
-       -> Source + Location + Profile + Connector registries
-       -> Session compiler / immutable generation
-       -> Scheduler / worker lease
-       -> MediaMTX path controller
-       -> Live GPU worker
-            -> realtime identity + appearance
-            -> optional annotated stream
-       -> Recording ingestion
-            -> MinIO video/index
-            -> PostgreSQL manifest/evidence
-       -> PostgreSQL results + outbox
-            -> Pull API
-            -> Webhook adapter
-            -> Kafka adapter
-```
-
-## Shared Invariants
-
-- PostgreSQL is the business source of truth.
-- MinIO owns binary recordings, snapshots, and immutable sample indexes.
-- Qdrant is a derived global identity vector index.
-- C++/GPU owns frame-rate-sensitive processing; no blocking external I/O occurs
-  in probes.
-- Requested specs and resolved specs are stored without secrets.
-- Every result is attributable to one session generation and spec hash.
-- External connector delivery is never the persistence source of truth.
-- Optional outputs do not alter recognition correctness.
-- No phase claims production readiness from mocks or short fixtures alone.
+Repositories without an explicit license in the reviewed checkout are conceptual
+or black-box test references only. Source is copied only from compatible licensed
+references with required attribution.
 
 ## Deferred Work
 
-- Cross-camera body ReID and trajectory stitching;
-- arbitrary user-supplied plugins or pipeline graphs;
-- caller-supplied executable code;
-- exact-once semantics across arbitrary external systems;
-- automatic physical-location inference from images;
-- dynamic DeepStream batching before isolated multi-camera correctness passes.
+- exact recording-sample sidecars and zero-frame recording joins;
+- PostgreSQL outbox, delivery replay, dead-letter management, and crash-safe
+  at-least-once Webhook delivery;
+- profile publication APIs and arbitrary caller-created profiles;
+- OIDC, RBAC, multi-tenant policy, generated SDKs, and public deprecation policy;
+- dynamic GPU resource classes and a general scheduler;
+- shared DeepStream dynamic batching;
+- cross-camera body ReID and trajectory stitching;
+- caller-supplied plugins, model binaries, or executable code.
 
 ## Documentation Set
 
 - `requirements/live-streaming-requirements.md`
 - `docs/superpowers/specs/2026-07-22-configurable-camera-session-api-design.md`
-- `docs/superpowers/specs/2026-07-22-mediamtx-recording-realtime-appearance-design.md`
-- `docs/superpowers/specs/2026-07-22-durable-live-result-delivery-design.md`
+- `docs/superpowers/specs/2026-07-22-live-frame-json-output-design.md`
+- `docs/superpowers/specs/2026-07-22-optional-recording-design.md`
 - `docs/superpowers/specs/2026-07-22-optional-annotated-stream-design.md`
-- `docs/superpowers/specs/2026-07-22-multi-camera-scheduler-design.md`
-- `docs/superpowers/specs/2026-07-22-live-platform-hardening-sdk-design.md`
+- `docs/superpowers/specs/2026-07-22-isolated-multi-camera-design.md`
+
+The former exact-frame recording, durable-outbox-first delivery, general
+scheduler, and hardening/SDK documents are not prerequisites for these four
+deliveries.

@@ -2,7 +2,7 @@ from io import BytesIO
 
 from PIL import Image, UnidentifiedImageError
 
-from app.services.exceptions import ValidationError
+from app.services.exceptions import InferenceError, ValidationError
 
 
 def validate_jpeg(data: bytes, max_bytes: int) -> None:
@@ -21,8 +21,6 @@ def normalize_image(data: bytes, content_type: str, max_bytes: int) -> bytes:
         raise ValidationError("Uploaded image exceeds the configured limit", "IMAGE_TOO_LARGE")
     if content_type not in {"image/jpeg", "image/jpg", "image/png"}:
         raise ValidationError("Only JPEG and PNG images are supported", "UNSUPPORTED_MEDIA_TYPE")
-    if data.startswith(b"\xff\xd8") and not data.endswith(b"\xff\xd9"):
-        data += b"\xff\xd9"
     try:
         with Image.open(BytesIO(data)) as image:
             if image.format not in {"JPEG", "PNG"}:
@@ -39,3 +37,9 @@ def normalize_image(data: bytes, content_type: str, max_bytes: int) -> bytes:
     if len(normalized) > max_bytes:
         raise ValidationError("Uploaded image exceeds the configured limit", "IMAGE_TOO_LARGE")
     return normalized
+
+
+def require_aligned_face_evidence(data: bytes) -> bytes:
+    if not data:
+        raise InferenceError("GPU worker did not return aligned face evidence")
+    return data

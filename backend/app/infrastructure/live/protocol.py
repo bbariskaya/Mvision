@@ -9,7 +9,7 @@ from uuid import UUID
 
 import msgpack
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 HEADER_SIZE = 4
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 MAX_ALIGNED_JPEG_BYTES = 512 * 1024
@@ -30,9 +30,7 @@ MessageType = Literal[
     "native_operation",
 ]
 
-_TRACEPARENT_PATTERN = re.compile(
-    r"^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$"
-)
+_TRACEPARENT_PATTERN = re.compile(r"^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
 _STABLE_ENUM_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ERROR_CODE_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 _NATIVE_OPERATIONS = {
@@ -59,9 +57,11 @@ _NATIVE_ATTRIBUTE_KEYS = {
 class ProtocolHeader:
     protocol_version: int
     message_type: MessageType | str
+    session_id: str
     camera_id: str
     run_id: str
     generation: int
+    runtime_attempt: int
     sequence: int
     traceparent: str
     tracestate: str | None
@@ -79,10 +79,19 @@ class StartCommand:
     output_mount_path: str
     output_udp_port: int
     output_rtsp_port: int
+    profile_version: int
+    analytics_mode: str
+    sample_every_n: int
+    detector_threshold: float
+    recognition_threshold: float
+    top2_margin: float
+    track_gap_ns: int
     latency_ms: int
     reconnect_interval_seconds: int
     reconnect_attempts: int
     frame_timeout_ns: int
+    recording_enabled: bool
+    annotated_enabled: bool
 
 
 @dataclass(frozen=True)
@@ -216,9 +225,11 @@ type LiveMessage = (
 _HEADER_FIELDS = {
     "protocol_version",
     "message_type",
+    "session_id",
     "camera_id",
     "run_id",
     "generation",
+    "runtime_attempt",
     "sequence",
     "traceparent",
     "tracestate",
@@ -234,10 +245,19 @@ _MESSAGE_FIELDS = {
         "output_mount_path",
         "output_udp_port",
         "output_rtsp_port",
+        "profile_version",
+        "analytics_mode",
+        "sample_every_n",
+        "detector_threshold",
+        "recognition_threshold",
+        "top2_margin",
+        "track_gap_ns",
         "latency_ms",
         "reconnect_interval_seconds",
         "reconnect_attempts",
         "frame_timeout_ns",
+        "recording_enabled",
+        "annotated_enabled",
     },
     "identity_assignment": {
         "tracker_id",
@@ -365,9 +385,11 @@ def _header(payload: dict[str, object]) -> ProtocolHeader:
     return ProtocolHeader(
         version,
         message_type,
+        _uuid(payload["session_id"]),
         _uuid(payload["camera_id"]),
         _uuid(payload["run_id"]),
         _integer(payload["generation"], minimum=1),
+        _integer(payload["runtime_attempt"], minimum=1),
         _integer(payload["sequence"]),
         traceparent,
         tracestate,
@@ -391,9 +413,11 @@ def _payload(message: LiveMessage) -> dict[str, object]:
     payload: dict[str, object] = {
         "protocol_version": message.header.protocol_version,
         "message_type": message.header.message_type,
+        "session_id": message.header.session_id,
         "camera_id": message.header.camera_id,
         "run_id": message.header.run_id,
         "generation": message.header.generation,
+        "runtime_attempt": message.header.runtime_attempt,
         "sequence": message.header.sequence,
         "traceparent": message.header.traceparent,
         "tracestate": message.header.tracestate,
@@ -409,10 +433,19 @@ def _payload(message: LiveMessage) -> dict[str, object]:
             output_mount_path=message.output_mount_path,
             output_udp_port=message.output_udp_port,
             output_rtsp_port=message.output_rtsp_port,
+            profile_version=message.profile_version,
+            analytics_mode=message.analytics_mode,
+            sample_every_n=message.sample_every_n,
+            detector_threshold=message.detector_threshold,
+            recognition_threshold=message.recognition_threshold,
+            top2_margin=message.top2_margin,
+            track_gap_ns=message.track_gap_ns,
             latency_ms=message.latency_ms,
             reconnect_interval_seconds=message.reconnect_interval_seconds,
             reconnect_attempts=message.reconnect_attempts,
             frame_timeout_ns=message.frame_timeout_ns,
+            recording_enabled=message.recording_enabled,
+            annotated_enabled=message.annotated_enabled,
         )
     elif isinstance(message, IdentityAssignment):
         payload.update(
@@ -555,6 +588,25 @@ def _decode_payload(payload: dict[str, object]) -> LiveMessage:
             raise ValueError("INVALID_INTEGER")
         if reconnect_attempts < -1:
             raise ValueError("INVALID_INTEGER")
+        analytics_mode = _string(payload["analytics_mode"])
+        if analytics_mode not in {"detect", "detectTrack", "recognize"}:
+            raise ValueError("INVALID_PAYLOAD")
+        detector_threshold = _finite(payload["detector_threshold"])
+        start_recognition_threshold = _finite(payload["recognition_threshold"])
+        top2_margin = _finite(payload["top2_margin"])
+        if not all(
+            0.0 <= value <= 1.0
+            for value in (
+                detector_threshold,
+                start_recognition_threshold,
+                top2_margin,
+            )
+        ):
+            raise ValueError("INVALID_PAYLOAD")
+        recording_enabled = payload["recording_enabled"]
+        annotated_enabled = payload["annotated_enabled"]
+        if not isinstance(recording_enabled, bool) or not isinstance(annotated_enabled, bool):
+            raise ValueError("INVALID_PAYLOAD")
         return StartCommand(
             header,
             _string(payload["uri"]),
@@ -566,10 +618,19 @@ def _decode_payload(payload: dict[str, object]) -> LiveMessage:
             _string(payload["output_mount_path"]),
             _integer(payload["output_udp_port"], minimum=1),
             _integer(payload["output_rtsp_port"], minimum=1),
+            _integer(payload["profile_version"], minimum=1),
+            analytics_mode,
+            _integer(payload["sample_every_n"], minimum=1),
+            detector_threshold,
+            start_recognition_threshold,
+            top2_margin,
+            _integer(payload["track_gap_ns"], minimum=1),
             _integer(payload["latency_ms"]),
             _integer(payload["reconnect_interval_seconds"]),
             reconnect_attempts,
             _integer(payload["frame_timeout_ns"], minimum=1),
+            recording_enabled,
+            annotated_enabled,
         )
     if header.message_type == "identity_assignment":
         identity_state = _string(payload["identity_state"])
@@ -642,9 +703,7 @@ def _decode_payload(payload: dict[str, object]) -> LiveMessage:
         return StateEvent(
             header,
             cast(
-                Literal[
-                    "STARTING", "ACTIVE", "RECONNECTING", "STOPPING", "STOPPED", "FAILED"
-                ],
+                Literal["STARTING", "ACTIVE", "RECONNECTING", "STOPPING", "STOPPED", "FAILED"],
                 state,
             ),
             _optional_string(payload["reason"]),
@@ -697,9 +756,7 @@ def _decode_payload(payload: dict[str, object]) -> LiveMessage:
             {_string(key): _finite(value) for key, value in gauges.items()},
         )
     if header.message_type == "failed":
-        return FailedEvent(
-            header, _string(payload["error_code"]), _string(payload["message"])
-        )
+        return FailedEvent(header, _string(payload["error_code"]), _string(payload["message"]))
     if header.message_type == "stopped":
         if not isinstance(payload["clean_shutdown"], bool):
             raise ValueError("INVALID_PAYLOAD")
@@ -742,9 +799,7 @@ def _decode_payload(payload: dict[str, object]) -> LiveMessage:
             attributes[key] = _finite(value)
         else:
             raise ValueError("INVALID_NATIVE_OPERATION")
-    return NativeOperationEvent(
-        header, operation, started, ended, status, error_code, attributes
-    )
+    return NativeOperationEvent(header, operation, started, ended, status, error_code, attributes)
 
 
 def decode_message(frame: bytes) -> LiveMessage:
@@ -770,20 +825,33 @@ def decode_message(frame: bytes) -> LiveMessage:
 
 
 class DecodeContext:
-    def __init__(self, camera_id: str, run_id: str, generation: int):
+    def __init__(
+        self,
+        session_id: str,
+        camera_id: str,
+        run_id: str,
+        generation: int,
+        runtime_attempt: int,
+    ):
+        self._session_id = _uuid(session_id)
         self._camera_id = _uuid(camera_id)
         self._run_id = _uuid(run_id)
         self._generation = _integer(generation, minimum=1)
+        self._runtime_attempt = _integer(runtime_attempt, minimum=1)
         self._assignment_revisions: dict[int, int] = {}
 
     def decode(self, frame: bytes) -> LiveMessage:
         message = decode_message(frame)
+        if message.header.session_id != self._session_id:
+            raise ValueError("WRONG_SESSION_ID")
         if message.header.camera_id != self._camera_id:
             raise ValueError("WRONG_CAMERA_ID")
         if message.header.run_id != self._run_id:
             raise ValueError("WRONG_RUN_ID")
         if message.header.generation != self._generation:
             raise ValueError("WRONG_GENERATION")
+        if message.header.runtime_attempt != self._runtime_attempt:
+            raise ValueError("WRONG_RUNTIME_ATTEMPT")
         if isinstance(message, IdentityAssignment):
             previous = self._assignment_revisions.get(message.tracker_id, 0)
             if message.assignment_revision <= previous:

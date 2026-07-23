@@ -31,35 +31,54 @@ class _IdentitySupport:
 
 
 class VideoIdentityVotingService:
-    def __init__(self, settings: Settings, matcher: FaceMatcher):
+    def __init__(
+        self,
+        settings: Settings,
+        matcher: FaceMatcher,
+        eligible_lifecycle_statuses: frozenset[str] = frozenset(
+            {"known", "anonymous"}
+        ),
+    ):
         self._settings = settings
         self._matcher = matcher
+        self._eligible_lifecycle_statuses = eligible_lifecycle_statuses
 
     async def resolve(self, track: CanonicalVideoTrack) -> VideoIdentityDecision:
         support: dict[str, _IdentitySupport] = {}
         total_weight = 0.0
-        nearest_known_score: float | None = None
+        nearest_active_score: float | None = None
         templates = track.source_templates
         candidate_groups = await self._matcher.candidates_batch(
             [list(template.embedding) for template in templates],
             minimum_score=0.0,
         )
         for template, candidates in zip(templates, candidate_groups, strict=True):
-            known_candidates = [
+            weight = 1.0 + math.log1p(template.detection_count)
+            total_weight += weight
+            active_candidates = [
                 candidate
                 for candidate in candidates
-                if getattr(candidate.identity, "lifecycle_status", None) == "known"
+                if getattr(candidate.identity, "lifecycle_status", None)
+                in self._eligible_lifecycle_statuses
             ]
-            if known_candidates:
-                template_nearest = max(candidate.score for candidate in known_candidates)
-                nearest_known_score = (
+            if active_candidates:
+                template_nearest = max(candidate.score for candidate in active_candidates)
+                nearest_active_score = (
                     template_nearest
-                    if nearest_known_score is None
-                    else max(nearest_known_score, template_nearest)
+                    if nearest_active_score is None
+                    else max(nearest_active_score, template_nearest)
                 )
             best_by_identity: dict[str, FaceMatch] = {}
-            for candidate in known_candidates:
-                if candidate.score < self._settings.video_track_vote_candidate_floor:
+            for candidate in active_candidates:
+                strong_threshold = (
+                    self._settings.recognition_threshold
+                    if candidate.identity.lifecycle_status == "known"
+                    else self._settings.anonymous_threshold
+                )
+                if candidate.score < min(
+                    strong_threshold,
+                    self._settings.video_track_vote_candidate_floor,
+                ):
                     continue
                 face_id = str(candidate.identity.face_id)
                 current = best_by_identity.get(face_id)
@@ -68,7 +87,6 @@ class VideoIdentityVotingService:
             eligible = list(best_by_identity.values())
             if not eligible:
                 continue
-            weight = 1.0 + math.log1p(template.detection_count)
             for candidate in eligible:
                 item = support.setdefault(
                     str(candidate.identity.face_id), _IdentitySupport(candidate.identity)
@@ -79,10 +97,9 @@ class VideoIdentityVotingService:
                 item.scores.append(candidate.score)
                 if item.best_match is None or candidate.score > item.best_match.score:
                     item.best_match = candidate
-            total_weight += weight
 
         if not support:
-            return VideoIdentityDecision(None, nearest_known_score)
+            return VideoIdentityDecision(None, nearest_active_score)
         ranked = sorted(
             support.values(), key=lambda item: (item.mean_score, item.weight), reverse=True
         )
@@ -101,8 +118,19 @@ class VideoIdentityVotingService:
                 for item in ranked[:5]
             ],
         )
-        if max(winner.scores) < self._settings.recognition_threshold:
-            return VideoIdentityDecision(None, nearest_known_score)
+        threshold = (
+            self._settings.recognition_threshold
+            if winner.identity.lifecycle_status == "known"
+            else self._settings.anonymous_threshold
+        )
+        strong = max(winner.scores) >= threshold
+        consensus = (
+            winner.votes >= self._settings.video_track_vote_min_count
+            and winner.weight / total_weight
+            >= self._settings.video_track_vote_min_support_ratio
+        )
+        if not (strong or consensus):
+            return VideoIdentityDecision(None, nearest_active_score)
         if winner.mean_score - runner_score < self._settings.video_track_vote_min_margin:
             return VideoIdentityDecision(None, winner.mean_score)
         assert winner.best_match is not None

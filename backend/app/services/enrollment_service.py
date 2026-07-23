@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from app.config import Settings
@@ -10,10 +11,12 @@ from app.infrastructure.database.repositories import (
     RecognitionResultRepository,
 )
 from app.infrastructure.database.session import AsyncSessionLocal
+from app.infrastructure.gpu.contracts import FaceDetection
 from app.infrastructure.gpu.worker_pool import GpuWorkerError, GpuWorkerPool
 from app.services.exceptions import InferenceError, NotFoundError, ValidationError
 from app.services.face_matcher import FaceMatch, FaceMatcher
 from app.services.face_sample_persistence_service import FaceSamplePersistenceService
+from app.services.image_validation import require_aligned_face_evidence
 
 
 class EnrollmentService:
@@ -66,10 +69,6 @@ class EnrollmentService:
             await session.commit()
         try:
             result = await self._workers.process(image, process_id)
-            if not result.faces:
-                raise ValidationError(
-                    "Enrollment image must contain a face", "NO_FACE", process_id
-                )
             detection = self._select_face(result.faces)
             embedding = list(detection.embedding)
             if face_id is not None:
@@ -80,7 +79,7 @@ class EnrollmentService:
                 selected_face_id = identity.face_id
             else:
                 match = await self._matcher.match(embedding)
-                selected_face_id = self._matching_identity_id(match, clean_name) or new_uuid7()
+                selected_face_id = self._matching_identity_id(match) or new_uuid7()
 
             async with AsyncSessionLocal() as session:
                 existing = await self._identity_repo.get_active_by_id(session, selected_face_id)
@@ -101,7 +100,7 @@ class EnrollmentService:
                 process_id=process_id,
                 face_id=selected_face_id,
                 sample_id=sample_id,
-                aligned_bytes=detection.aligned_jpeg or image,
+                aligned_bytes=require_aligned_face_evidence(detection.aligned_jpeg),
                 media_type="image/jpeg",
                 vector=embedding,
                 bounding_box=box,
@@ -143,7 +142,18 @@ class EnrollmentService:
                     match_confidence=1.0,
                     matched_sample_id=sample_id,
                 )
-                await self._process_repo.complete(session, process_id, 1)
+                await self._process_repo.complete(
+                    session,
+                    process_id,
+                    1,
+                    details={
+                        "operation": "enroll",
+                        "face_count": 1,
+                        "faces": [
+                            {"face_id": selected_face_id, "status": "known"}
+                        ],
+                    },
+                )
                 await session.commit()
             await self._log_event(
                 process_id,
@@ -151,8 +161,9 @@ class EnrollmentService:
                 {"face_id": selected_face_id, "status": "known"},
             )
             return {"process_id": process_id, "face_count": 1, "faces": [face]}
-        except ValidationError:
-            await self._fail(process_id, "INVALID_ENROLLMENT")
+        except ValidationError as exc:
+            exc.process_id = process_id
+            await self._fail(process_id, exc.error_code)
             raise
         except NotFoundError:
             await self._fail(process_id, "NOT_FOUND")
@@ -160,6 +171,10 @@ class EnrollmentService:
         except GpuWorkerError as exc:
             await self._fail(process_id, "INFERENCE_ERROR")
             raise InferenceError(str(exc), process_id) from exc
+        except InferenceError as exc:
+            exc.process_id = process_id
+            await self._fail(process_id, exc.error_code)
+            raise
 
         except Exception as exc:
             await self._fail(process_id, "ENROLLMENT_ERROR")
@@ -169,19 +184,17 @@ class EnrollmentService:
             raise InferenceError(str(exc), process_id) from exc
 
     @staticmethod
-    def _select_face(faces):
-        return max(faces, key=lambda face: face.width * face.height)
+    def _select_face(faces: Sequence[FaceDetection]) -> FaceDetection:
+        if len(faces) != 1:
+            raise ValidationError(
+                "Enrollment image must contain exactly one face",
+                "NO_FACE" if not faces else "MULTIPLE_FACES",
+            )
+        return faces[0]
 
     @staticmethod
-    def _matching_identity_id(match: FaceMatch | None, requested_name: str) -> str | None:
-        if match is None or getattr(match.identity, "lifecycle_status", None) != "known":
-            return None
-        existing_name = getattr(match.identity, "name", None)
-        if not isinstance(existing_name, str):
-            return None
-        if existing_name.strip().casefold() != requested_name.strip().casefold():
-            return None
-        return str(match.identity.face_id)
+    def _matching_identity_id(match: FaceMatch | None) -> str | None:
+        return None if match is None else str(match.identity.face_id)
 
     async def reject(self, process_id: str, code: str) -> None:
         async with AsyncSessionLocal() as session:

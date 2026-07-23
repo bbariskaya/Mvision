@@ -6,8 +6,10 @@ from app.infrastructure.database.repositories import (
     FaceIdentityRepository,
     FaceSampleRepository,
     LiveCameraRepository,
+    LiveConnectorRepository,
     LiveEventRepository,
     LiveRunRepository,
+    LiveSessionRepository,
     ProcessEventRepository,
     ProcessRecordRepository,
     RecognitionResultRepository,
@@ -17,6 +19,7 @@ from app.infrastructure.database.repositories import (
 from app.infrastructure.gpu.worker_pool import GpuWorkerPool
 from app.infrastructure.live.native_runner import NativeLiveRunner
 from app.infrastructure.live.uri_cipher import LiveUriCipher
+from app.infrastructure.media.mediamtx_client import MediaMtxClient
 from app.infrastructure.object_storage.minio_adapter import MinIOAdapter
 from app.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
 from app.infrastructure.video.native_runner import NativeVideoRunner
@@ -27,9 +30,13 @@ from app.services.face_matcher import FaceMatcher
 from app.services.face_sample_persistence_service import FaceSamplePersistenceService
 from app.services.identity_service import IdentityService
 from app.services.live_camera_service import LiveCameraService
+from app.services.live_connector_service import LiveConnectorService
 from app.services.live_event_service import InMemoryLiveNotifier, LiveEventService
 from app.services.live_identity_service import LiveIdentityService
+from app.services.live_session_compiler import LiveSessionCompiler
+from app.services.live_session_service import LiveSessionService
 from app.services.live_supervisor import LiveSupervisor
+from app.services.mediamtx_reconciliation_service import MediaMtxReconciliationService
 from app.services.process_query_service import ProcessQueryService
 from app.services.recognition_service import RecognitionService
 from app.services.video_identity_voting_service import VideoIdentityVotingService
@@ -55,6 +62,10 @@ class ServiceContainer:
     video_processor: VideoJobProcessor
     live_cameras: LiveCameraService
     live_supervisor: LiveSupervisor
+    live_connectors: LiveConnectorService
+    live_sessions: LiveSessionService
+    mediamtx_client: MediaMtxClient
+    mediamtx_reconciler: MediaMtxReconciliationService
 
 
 @lru_cache
@@ -73,6 +84,8 @@ def get_container(
     live_camera_repo = LiveCameraRepository()
     live_run_repo = LiveRunRepository()
     live_event_repo = LiveEventRepository()
+    live_connector_repo = LiveConnectorRepository()
+    live_session_repo = LiveSessionRepository()
     minio = MinIOAdapter(settings)
     qdrant = QdrantAdapter(settings, telemetry)
     workers = GpuWorkerPool(settings.gpu_socket_paths, settings.gpu_worker_timeout_seconds)
@@ -103,10 +116,8 @@ def get_container(
         identity_repo, sample_repo, process_repo, result_repo, event_repo, qdrant
     )
     processes = ProcessQueryService(process_repo, result_repo, event_repo)
-    video_uploads = VideoUploadService(
-        settings, minio, video_job_repo, process_repo, event_repo
-    )
-    video_jobs = VideoJobService(video_job_repo, video_track_repo, minio)
+    video_uploads = VideoUploadService(settings, minio, video_job_repo, process_repo, event_repo)
+    video_jobs = VideoJobService(video_job_repo, video_track_repo, process_repo, minio)
     video_tracking = VideoTrackingService(
         settings.video_track_reconciliation_threshold,
         settings.video_appearance_max_gap_seconds,
@@ -119,6 +130,8 @@ def get_container(
         samples,
         result_repo,
         video_track_repo,
+        video_job_repo,
+        process_repo,
     )
     video_processor = VideoJobProcessor(
         settings,
@@ -127,6 +140,7 @@ def get_container(
         process_repo,
         NativeVideoRunner(settings),
         video_results.finalize,
+        event_repo,
     )
     live_cipher = None
     if settings.live_encryption_key_values and settings.live_uri_fingerprint_key is not None:
@@ -142,7 +156,10 @@ def get_container(
         output_host=settings.live_rtsp_output_host,
         output_port=settings.live_rtsp_output_port,
     )
-    live_identity = LiveIdentityService(settings, video_voter, qdrant, telemetry)
+    live_voter = VideoIdentityVotingService(
+        settings, matcher, eligible_lifecycle_statuses=frozenset({"known"})
+    )
+    live_identity = LiveIdentityService(settings, live_voter, qdrant, telemetry)
     live_events = LiveEventService(
         settings,
         live_event_repo,
@@ -160,6 +177,28 @@ def get_container(
         event_service=live_events,
         telemetry=telemetry,
         metrics=metrics,
+        session_repository=live_session_repo,
+    )
+    mediamtx_client = MediaMtxClient(
+        settings.mediamtx_control_url,
+        settings.mediamtx_request_timeout_seconds,
+    )
+    mediamtx_reconciler = MediaMtxReconciliationService(
+        mediamtx_client,
+        live_session_repo,
+        live_cipher,
+    )
+    live_connectors = LiveConnectorService(live_connector_repo, live_cipher)
+    live_sessions = LiveSessionService(
+        settings,
+        live_session_repo,
+        live_connector_repo,
+        LiveSessionCompiler(
+            settings.live_profile_id,
+            settings.live_profile_version,
+        ),
+        live_cipher,
+        mediamtx_reconciler,
     )
     return ServiceContainer(
         settings,
@@ -175,6 +214,10 @@ def get_container(
         video_processor,
         live_cameras,
         live_supervisor,
+        live_connectors,
+        live_sessions,
+        mediamtx_client,
+        mediamtx_reconciler,
     )
 
 
@@ -204,3 +247,11 @@ def get_video_job_service() -> VideoJobService:
 
 def get_live_camera_service() -> LiveCameraService:
     return get_container().live_cameras
+
+
+def get_live_connector_service() -> LiveConnectorService:
+    return get_container().live_connectors
+
+
+def get_live_session_service() -> LiveSessionService:
+    return get_container().live_sessions

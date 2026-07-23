@@ -176,10 +176,12 @@ int main(int argc, char** argv) {
     options.output_mount_path =
         "/live/019b0000-0000-7000-8000-000000000001";
     options.event_header = {
-        1,
+        mvision::kLiveProtocolVersion,
         "start",
         "019b0000-0000-7000-8000-000000000001",
+        "019b0000-0000-7000-8000-000000000001",
         "019b0000-0000-7000-8000-000000000002",
+        1,
         1,
         1,
         "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",

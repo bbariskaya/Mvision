@@ -20,13 +20,23 @@ from app.infrastructure.live.protocol import (
 CAMERA_ID = "019b0000-0000-7000-8000-000000000001"
 RUN_ID = "019b0000-0000-7000-8000-000000000002"
 FACE_ID = "019b0000-0000-7000-8000-000000000003"
+SESSION_ID = "019b0000-0000-7000-8000-000000000004"
 TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 TRACESTATE = "vendor=value"
 
 
 def _header(message_type: str, sequence: int) -> ProtocolHeader:
     return ProtocolHeader(
-        1, message_type, CAMERA_ID, RUN_ID, 1, sequence, TRACEPARENT, TRACESTATE
+        protocol_version=2,
+        message_type=message_type,
+        session_id=SESSION_ID,
+        camera_id=CAMERA_ID,
+        run_id=RUN_ID,
+        generation=3,
+        runtime_attempt=2,
+        sequence=sequence,
+        traceparent=TRACEPARENT,
+        tracestate=TRACESTATE,
     )
 
 
@@ -61,10 +71,19 @@ def test_python_commands_and_native_events_have_full_field_parity() -> None:
             "/live/camera",
             5400,
             8554,
+            4,
+            "recognize",
+            2,
+            0.5,
+            0.62,
+            0.05,
+            1_500_000_000,
             200,
             10,
             -1,
             5_000_000_000,
+            False,
+            False,
         ),
         IdentityAssignment(
             _header("identity_assignment", 2),

@@ -8,6 +8,7 @@ from pydantic import SecretStr
 
 _LIVE_URI_PATTERN = re.compile(r"\brtsps?://[^\s]+", re.IGNORECASE)
 _MAX_URI_LENGTH = 4096
+_MAX_SECRET_LENGTH = 6000
 
 
 class LiveUriDecryptionError(ValueError):
@@ -66,3 +67,17 @@ class LiveUriCipher:
             validated.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
+
+    def encrypt_secret(self, value: str) -> str:
+        if not value or len(value.encode("utf-8")) > _MAX_SECRET_LENGTH:
+            raise ValueError("LIVE_SECRET_INVALID")
+        return self._fernet.encrypt(value.encode("utf-8")).decode("ascii")
+
+    def decrypt_secret(self, ciphertext: str) -> SecretStr:
+        try:
+            plaintext = self._fernet.decrypt(ciphertext).decode("utf-8")
+        except (InvalidToken, TypeError, UnicodeDecodeError) as exc:
+            raise LiveUriDecryptionError("LIVE_SECRET_DECRYPTION_FAILED") from exc
+        if not plaintext or len(plaintext.encode("utf-8")) > _MAX_SECRET_LENGTH:
+            raise LiveUriDecryptionError("LIVE_SECRET_DECRYPTION_FAILED")
+        return SecretStr(plaintext)

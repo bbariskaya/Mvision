@@ -29,9 +29,7 @@ def test_uri_round_trip_never_exposes_plaintext() -> None:
 
 def test_newest_key_encrypts_and_older_key_remains_decryptable() -> None:
     old_cipher = LiveUriCipher([OLD_FERNET_KEY], TEST_HMAC_KEY)
-    rotated_cipher = LiveUriCipher(
-        [TEST_FERNET_KEY, OLD_FERNET_KEY], TEST_HMAC_KEY
-    )
+    rotated_cipher = LiveUriCipher([TEST_FERNET_KEY, OLD_FERNET_KEY], TEST_HMAC_KEY)
     uri = "rtsps://camera.invalid/live"
 
     old_token = old_cipher.encrypt(uri)
@@ -95,6 +93,27 @@ def test_fingerprint_is_stable_and_keyed() -> None:
     assert uri not in first.fingerprint(uri)
 
 
+def test_generic_live_secret_round_trip_supports_whep_and_connector_json() -> None:
+    cipher = LiveUriCipher([TEST_FERNET_KEY], TEST_HMAC_KEY)
+    secret = (
+        '{"source":"wheps://alice:secret@camera/live?token=hidden","connectorToken":"write-only"}'
+    )
+
+    encrypted = cipher.encrypt_secret(secret)
+    decrypted = cipher.decrypt_secret(encrypted)
+
+    assert secret not in encrypted
+    assert decrypted.get_secret_value() == secret
+    assert secret not in repr(decrypted)
+
+
+def test_generic_live_secret_rejects_oversized_plaintext() -> None:
+    cipher = LiveUriCipher([TEST_FERNET_KEY], TEST_HMAC_KEY)
+
+    with pytest.raises(ValueError, match="LIVE_SECRET_INVALID"):
+        cipher.encrypt_secret("x" * 6001)
+
+
 def test_live_settings_require_both_secret_sets_when_enabled() -> None:
     with pytest.raises(ValidationError, match="LIVE_SECRET_CONFIGURATION_REQUIRED"):
         Settings(_env_file=None, live_enabled=True)
@@ -104,6 +123,7 @@ def test_live_settings_accept_configured_secrets() -> None:
     settings = Settings(
         _env_file=None,
         live_enabled=True,
+        live_api_key="internal-key",
         live_uri_encryption_keys=TEST_FERNET_KEY,
         live_uri_fingerprint_key=TEST_HMAC_KEY,
     )

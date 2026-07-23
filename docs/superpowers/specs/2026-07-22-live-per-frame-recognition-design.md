@@ -2,10 +2,12 @@
 
 ## Status
 
-Approved by the user on 2026-07-22. This design supersedes only the immutable
-live-label and fixed OSD cosine behavior in
-`2026-07-21-single-camera-livestream-design.md`. Durable event deduplication,
-quality gates, absolute threshold, top-2 margin, and tracker expiry remain.
+Implemented historical baseline. The per-frame ArcFace comparison and OSD
+hysteresis remain relevant. The new external frame-result and persistence
+contract is defined by
+`2026-07-22-live-frame-json-output-design.md`, which supersedes this document's
+restriction against per-frame result delivery. Quality gates, absolute
+threshold, top-2 margin, and tracker expiry remain.
 
 ## Problem
 
@@ -32,8 +34,9 @@ attached to a reused or drifting tracker until expiry.
   three consecutive five-frame evaluations pass both the absolute threshold
   and top-2 margin.
 - Track expiry clears the label, reference embedding, score, and all streaks.
-- Do not persist or notify on per-frame score changes. Durable events represent
-  identity transitions, not display telemetry.
+- The historical detection-event table is not updated for score-only changes.
+  The separate `frame.result` stream may contain the current-frame score as
+  defined by the new live frame JSON contract.
 
 ## Architecture
 
@@ -171,8 +174,8 @@ Rachel-to-Monica switch. Candidate or tracker expiry resets the streak.
 
 ## Non-Goals
 
-- Persisting every frame score.
+- Unbounded retention of every frame score without a configured retention policy.
 - Lowering recognition thresholds to force a match.
 - Removing top-2 margin or quality gates.
 - Cross-camera ReID.
-- Repairing the deferred Phase 2 Rachel-to-Monica historical result flow.
+- Rewriting already delivered frame events after a later identity decision.

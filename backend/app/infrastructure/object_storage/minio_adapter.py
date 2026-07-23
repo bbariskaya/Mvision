@@ -22,7 +22,8 @@ OBJECT_KEY_PATTERN = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/aligned$"
 )
 VIDEO_OBJECT_KEY_PATTERN = re.compile(
-    r"^videos/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)+"
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/source$"
 )
 LIVE_OBJECT_KEY_PATTERN = re.compile(

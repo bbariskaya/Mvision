@@ -1,5 +1,14 @@
 # Sprint 03 - Tek Kamera RTSP Canli Yayin
 
+## Sonraki Onayli Yon
+
+Bu dosya uygulanan tek-kamera baseline sprint'inin tarihsel durumudur. Sonraki
+urun teslimatlari `requirements/live-streaming-requirements.md` ve
+`docs/superpowers/specs/2026-07-22-live-analytics-platform-roadmap-design.md`
+tarafindan yonetilir: typed Session API + MediaMTX ingress, her islenen kare icin
+bbox/landmark/kimlik JSON, istege bagli appearance/kayit/annotated output ve
+ardindan izole multi-camera.
+
 ## Yetki ve Durum
 
 Kullanici 2026-07-21 tarihinde Phase 2'nin tamamlandigini ve sonraki urun

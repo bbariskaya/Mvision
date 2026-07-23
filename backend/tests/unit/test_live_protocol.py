@@ -28,13 +28,23 @@ from app.infrastructure.live.protocol import (
 
 CAMERA_ID = "019b0000-0000-7000-8000-000000000001"
 RUN_ID = "019b0000-0000-7000-8000-000000000002"
+SESSION_ID = "019b0000-0000-7000-8000-000000000004"
 TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 TRACESTATE = "vendor=value"
 
 
 def _header(message_type: str, *, sequence: int = 7) -> ProtocolHeader:
     return ProtocolHeader(
-        1, message_type, CAMERA_ID, RUN_ID, 1, sequence, TRACEPARENT, TRACESTATE
+        2,
+        message_type,
+        SESSION_ID,
+        CAMERA_ID,
+        RUN_ID,
+        1,
+        1,
+        sequence,
+        TRACEPARENT,
+        TRACESTATE,
     )
 
 
@@ -51,6 +61,83 @@ def _observation() -> LiveObservation:
     )
 
 
+def test_v2_start_round_trip_preserves_session_fence_and_resolved_fields() -> None:
+    header = ProtocolHeader(
+        protocol_version=2,
+        message_type="start",
+        session_id=SESSION_ID,
+        camera_id=CAMERA_ID,
+        run_id=RUN_ID,
+        generation=3,
+        runtime_attempt=2,
+        sequence=7,
+        traceparent=TRACEPARENT,
+        tracestate=TRACESTATE,
+    )
+    start = StartCommand(
+        header=header,
+        uri="rtsp://mediamtx:8554/ingress/opaque-generation",
+        gpu_id=0,
+        pgie_config_path="pgie.txt",
+        preprocess_config_path="preprocess.txt",
+        sgie_config_path="sgie.txt",
+        tracker_config_path="tracker.yml",
+        output_mount_path="/live/session",
+        output_udp_port=5400,
+        output_rtsp_port=8554,
+        profile_version=4,
+        analytics_mode="recognize",
+        sample_every_n=2,
+        detector_threshold=0.5,
+        recognition_threshold=0.62,
+        top2_margin=0.05,
+        track_gap_ns=1_500_000_000,
+        latency_ms=100,
+        reconnect_interval_seconds=2,
+        reconnect_attempts=-1,
+        frame_timeout_ns=5_000_000_000,
+        recording_enabled=False,
+        annotated_enabled=False,
+    )
+
+    assert decode_message(encode_message(start)) == start
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("session_id", "019b0000-0000-7000-8000-000000000009", "WRONG_SESSION_ID"),
+        ("runtime_attempt", 1, "WRONG_RUNTIME_ATTEMPT"),
+    ],
+)
+def test_v2_context_rejects_wrong_session_or_runtime_attempt(
+    field: str, value: object, code: str
+) -> None:
+    header = ProtocolHeader(
+        protocol_version=2,
+        message_type="state",
+        session_id=SESSION_ID,
+        camera_id=CAMERA_ID,
+        run_id=RUN_ID,
+        generation=3,
+        runtime_attempt=2,
+        sequence=7,
+        traceparent=TRACEPARENT,
+        tracestate=None,
+    )
+    context = DecodeContext(
+        session_id=SESSION_ID,
+        camera_id=CAMERA_ID,
+        run_id=RUN_ID,
+        generation=3,
+        runtime_attempt=2,
+    )
+    event = StateEvent(replace(header, **{field: value}), "ACTIVE", None)
+
+    with pytest.raises(ValueError, match=f"^{code}$"):
+        context.decode(encode_message(event))
+
+
 def _messages():
     return (
         StartCommand(
@@ -64,10 +151,19 @@ def _messages():
             "/live/camera",
             5400,
             8554,
+            1,
+            "recognize",
+            1,
+            0.5,
+            0.62,
+            0.05,
+            1_500_000_000,
             200,
             10,
             -1,
             5_000_000_000,
+            False,
+            False,
         ),
         IdentityAssignment(
             _header("identity_assignment", sequence=8),
@@ -100,9 +196,7 @@ def _messages():
             (_observation(),),
             b"\xff\xd8\xff\xd9",
         ),
-        TrackExpiredEvent(
-            _header("track_expired"), 42, 2, 1_000_000_000, 2_000_000_000, "idle"
-        ),
+        TrackExpiredEvent(_header("track_expired"), 42, 2, 1_000_000_000, 2_000_000_000, "idle"),
         MetricsEvent(_header("metrics"), {"decoded_frames": 20}, {"fps": 29.97}),
         FailedEvent(_header("failed"), "LIVE_PIPELINE_ERROR", "pipeline failed"),
         StoppedEvent(_header("stopped"), 20, 2, 0, True, "operator"),
@@ -147,7 +241,7 @@ def test_rejects_payload_over_four_mib_before_reading_body() -> None:
 @pytest.mark.parametrize(
     ("field", "value", "code"),
     [
-        ("protocol_version", 2, "UNSUPPORTED_PROTOCOL_VERSION"),
+        ("protocol_version", 1, "UNSUPPORTED_PROTOCOL_VERSION"),
         ("message_type", "future", "UNKNOWN_MESSAGE_TYPE"),
         ("camera_id", "not-a-uuid", "INVALID_UUID"),
         ("generation", True, "INVALID_INTEGER"),
@@ -162,7 +256,7 @@ def test_rejects_invalid_header_fields(field: str, value: object, code: str) -> 
 
 
 def test_context_rejects_wrong_generation() -> None:
-    context = DecodeContext(CAMERA_ID, RUN_ID, 2)
+    context = DecodeContext(SESSION_ID, CAMERA_ID, RUN_ID, 2, 1)
 
     with pytest.raises(ValueError, match="^WRONG_GENERATION$"):
         context.decode(encode_message(StateEvent(_header("state"), "ACTIVE", None)))
@@ -176,7 +270,7 @@ def test_context_rejects_wrong_generation() -> None:
     ],
 )
 def test_context_rejects_wrong_camera_or_run(camera_id: str, run_id: str, code: str) -> None:
-    context = DecodeContext(camera_id, run_id, 1)
+    context = DecodeContext(SESSION_ID, camera_id, run_id, 1, 1)
 
     with pytest.raises(ValueError, match=f"^{code}$"):
         context.decode(encode_message(StateEvent(_header("state"), "ACTIVE", None)))
@@ -236,7 +330,7 @@ def test_rejects_snapshot_over_512_kib() -> None:
 
 
 def test_rejects_out_of_order_assignment_revision() -> None:
-    context = DecodeContext(CAMERA_ID, RUN_ID, 1)
+    context = DecodeContext(SESSION_ID, CAMERA_ID, RUN_ID, 1, 1)
     assignment = _messages()[1]
     context.decode(encode_message(assignment))
 

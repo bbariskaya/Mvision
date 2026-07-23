@@ -122,6 +122,8 @@ class _JobService:
             "appearances": [
                 {
                     "job_id": JOB_ID,
+                    "process_id": PROCESS_ID,
+                    "video_url": f"/api/v1/videos/jobs/{JOB_ID}/video",
                     "track_id": "019f8000-0000-7000-8000-000000000011",
                     "first_seen": 0.2,
                     "last_seen": 0.2,
@@ -183,7 +185,10 @@ def test_result_source_range_and_face_appearances_contracts():
     assert source.content == b"ide"
     assert source.headers["content-range"] == "bytes 1-3/5"
     assert appearances.status_code == 200
-    assert appearances.json()["appearances"][0]["jobId"] == JOB_ID
+    appearance = appearances.json()["appearances"][0]
+    assert appearance["jobId"] == JOB_ID
+    assert appearance["processId"] == PROCESS_ID
+    assert appearance["videoUrl"] == f"/api/v1/videos/jobs/{JOB_ID}/video"
 
 
 def teardown_module():

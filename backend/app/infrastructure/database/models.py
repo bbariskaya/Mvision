@@ -462,6 +462,179 @@ class LiveCameraRun(Base):
     )
 
 
+class LiveSession(Base):
+    __tablename__ = "live_session"
+
+    session_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=new_uuid7
+    )
+    camera_external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    location_snapshot: Mapped[dict | None] = mapped_column(JSONB)
+    desired_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="running"
+    )
+    current_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    stopped_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            "desired_state IN ('running', 'stopped')",
+            name="live_session_desired_state_check",
+        ),
+        CheckConstraint(
+            "current_generation >= 1", name="live_session_generation_check"
+        ),
+        Index("ix_live_session_desired_updated", "desired_state", "updated_at"),
+    )
+
+
+class LiveSessionGeneration(Base):
+    __tablename__ = "live_session_generation"
+
+    generation_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=new_uuid7
+    )
+    session_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("live_session.session_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    requested_spec: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    resolved_spec: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    spec_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    profile_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_ciphertext: Mapped[str | None] = mapped_column(String(8192))
+    ingress_path: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    desired_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="running"
+    )
+    runtime_state: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="ACCEPTED"
+    )
+    media_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="provisioning"
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    started_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    stopped_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+
+    __table_args__ = (
+        CheckConstraint("generation >= 1", name="live_generation_number_check"),
+        CheckConstraint("profile_version >= 1", name="live_generation_profile_version_check"),
+        CheckConstraint(
+            "source_type IN ('rtspPull', 'whepPull', 'whipPush')",
+            name="live_generation_source_type_check",
+        ),
+        CheckConstraint(
+            "(source_type = 'whipPush' AND source_ciphertext IS NULL) OR "
+            "(source_type IN ('rtspPull', 'whepPull') AND source_ciphertext IS NOT NULL)",
+            name="live_generation_source_secret_check",
+        ),
+        CheckConstraint(
+            "desired_state IN ('running', 'stopped')",
+            name="live_generation_desired_state_check",
+        ),
+        CheckConstraint(
+            "runtime_state IN ('ACCEPTED', 'WAITING_FOR_SOURCE', 'STARTING', "
+            "'ACTIVE', 'RECONNECTING', 'STOPPING', 'STOPPED', 'FAILED')",
+            name="live_generation_runtime_state_check",
+        ),
+        CheckConstraint(
+            "media_state IN ('provisioning', 'waiting', 'ready', 'failed')",
+            name="live_generation_media_state_check",
+        ),
+        UniqueConstraint(
+            "session_id", "generation", name="uq_live_generation_session_number"
+        ),
+        Index("ix_live_generation_claim", "desired_state", "media_state", "created_at"),
+        Index("ix_live_generation_session_created", "session_id", "created_at"),
+    )
+
+
+class LiveSessionRun(Base):
+    __tablename__ = "live_session_run"
+
+    run_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=new_uuid7
+    )
+    generation_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("live_session_generation.generation_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    runtime_attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    runtime_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    lease_token: Mapped[str | None] = mapped_column(String(64))
+    lease_expires_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    started_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    stopped_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("runtime_attempt >= 1", name="live_session_run_attempt_check"),
+        CheckConstraint(
+            "runtime_state IN ('STARTING', 'ACTIVE', 'RECONNECTING', "
+            "'STOPPING', 'STOPPED', 'FAILED')",
+            name="live_session_run_runtime_state_check",
+        ),
+        UniqueConstraint(
+            "generation_id", "runtime_attempt", name="uq_live_session_run_attempt"
+        ),
+        Index("ix_live_session_run_lease", "runtime_state", "lease_expires_at"),
+        Index("ix_live_session_run_generation_created", "generation_id", "created_at"),
+    )
+
+
+class LiveConnector(Base):
+    __tablename__ = "live_connector"
+
+    connector_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=new_uuid7
+    )
+    connector_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    safe_config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    secret_ciphertext: Mapped[str | None] = mapped_column(String(8192))
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "connector_type IN ('webhook', 'kafka')",
+            name="live_connector_type_check",
+        ),
+        Index("ix_live_connector_enabled_created", "enabled", "created_at"),
+    )
+
+
 class LiveDetectionEvent(Base):
     __tablename__ = "live_detection_event"
 

@@ -13,6 +13,7 @@ from app.infrastructure.gpu.worker_pool import GpuWorkerError, GpuWorkerPool
 from app.services.exceptions import InferenceError, ServiceError
 from app.services.face_matcher import FaceMatcher
 from app.services.face_sample_persistence_service import FaceSamplePersistenceService
+from app.services.image_validation import require_aligned_face_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class RecognitionService:
                         process_id=process_id,
                         face_id=face_id,
                         sample_id=sample_id,
-                        aligned_bytes=detection.aligned_jpeg or image,
+                        aligned_bytes=require_aligned_face_evidence(detection.aligned_jpeg),
                         media_type="image/jpeg",
                         vector=embedding,
                         bounding_box=self._box(detection),
@@ -110,7 +111,19 @@ class RecognitionService:
                         match_confidence=snapshot["confidence"],
                         matched_sample_id=snapshot["matched_sample_id"],
                     )
-                await self._process_repo.complete(session, process_id, len(faces))
+                await self._process_repo.complete(
+                    session,
+                    process_id,
+                    len(faces),
+                    details={
+                        "operation": "recognize",
+                        "face_count": len(faces),
+                        "faces": [
+                            {"face_id": face["face_id"], "status": face["status"]}
+                            for face in faces
+                        ],
+                    },
+                )
                 await session.commit()
             await self._log_event(
                 process_id,

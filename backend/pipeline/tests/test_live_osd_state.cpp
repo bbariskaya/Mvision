@@ -29,8 +29,9 @@ mvision::IdentityAssignment assignment(std::uint64_t generation,
                                         std::optional<std::string> face_id,
                                         std::optional<float> score) {
   const bool known = state == "known";
-  return {{1, "identity_assignment", kCameraId, kRunId, generation, revision,
-           kTraceparent, std::nullopt},
+  return {{mvision::kLiveProtocolVersion, "identity_assignment", kCameraId,
+           kCameraId, kRunId, generation, 1, revision, kTraceparent,
+           std::nullopt},
           42,
           revision,
           epoch,

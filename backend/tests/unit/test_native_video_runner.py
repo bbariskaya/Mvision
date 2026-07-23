@@ -8,7 +8,9 @@ from app.config import Settings
 from app.infrastructure.database.models import VideoJob
 from app.infrastructure.video.native_runner import (
     NativeVideoCancelledError,
+    NativeVideoFailedError,
     NativeVideoRunner,
+    NativeVideoTimeoutError,
 )
 from app.infrastructure.video.protocol import VideoCompleted, VideoProgress
 
@@ -118,6 +120,52 @@ async def test_runner_rejects_success_without_completed_event(tmp_path: Path):
             lambda event: None,
             lambda: False,
         )
+
+
+@pytest.mark.asyncio
+async def test_runner_preserves_native_failed_event_code(tmp_path: Path):
+    executable = _executable(
+        tmp_path / "failed.py",
+        """
+import msgpack, struct, sys
+payload = {"protocol_version": 1, "event_type": "failed",
+           "error_code": "VIDEO_DECODE_FAILED", "message": "decode failed"}
+data = msgpack.packb(payload, use_bin_type=True)
+sys.stdout.buffer.write(struct.pack("!I", len(data)) + data)
+sys.stdout.buffer.flush()
+""",
+    )
+    settings = Settings(_env_file=None, video_native_executable=str(executable))
+
+    with pytest.raises(NativeVideoFailedError) as exc:
+        await NativeVideoRunner(settings).run(
+            _job(), tmp_path / "input.mp4", lambda event: None, lambda: False
+        )
+
+    assert exc.value.error_code == "VIDEO_DECODE_FAILED"
+
+
+@pytest.mark.asyncio
+async def test_runner_raises_stable_timeout_error(tmp_path: Path):
+    executable = _executable(
+        tmp_path / "timeout.py",
+        """
+import time
+time.sleep(5)
+""",
+    )
+    settings = Settings(
+        _env_file=None,
+        video_native_executable=str(executable),
+        video_job_timeout_seconds=1,
+    )
+
+    with pytest.raises(NativeVideoTimeoutError) as exc:
+        await NativeVideoRunner(settings, poll_seconds=0.02).run(
+            _job(), tmp_path / "input.mp4", lambda event: None, lambda: False
+        )
+
+    assert exc.value.error_code == "VIDEO_PROCESSING_TIMEOUT"
 
 
 def test_fake_executable_is_runnable(tmp_path: Path):

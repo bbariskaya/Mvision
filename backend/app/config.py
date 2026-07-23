@@ -62,26 +62,27 @@ class Settings(BaseSettings):
     )
     gpu_worker_timeout_seconds: float = 120.0
 
-    video_max_upload_bytes: int = 500 * 1024 * 1024
-    video_max_duration_seconds: int = 300
+    video_max_upload_bytes: int = Field(default=500 * 1024 * 1024, gt=0)
+    video_max_duration_seconds: int = Field(default=300, gt=0)
     video_allowed_containers: str = "mp4,mov,avi,matroska"
     video_allowed_codecs: str = "h264,hevc,mjpeg,mpeg4"
-    video_retention_seconds: int = 7 * 24 * 60 * 60
+    video_retention_seconds: int = Field(default=7 * 24 * 60 * 60, gt=0)
     video_minio_prefix: str = "videos"
+    video_max_concurrent_jobs: int = Field(default=3, gt=0)
     video_default_sampling_mode: str = "frames_per_second"
-    video_default_frames_per_second: float = 2.0
-    video_job_timeout_seconds: int = 1800
-    video_probe_timeout_seconds: float = 30.0
-    video_job_lease_seconds: int = 60
-    video_job_max_attempts: int = 3
-    video_progress_update_interval_seconds: float = 1.0
+    video_default_frames_per_second: float = Field(default=2.0, gt=0)
+    video_job_timeout_seconds: int = Field(default=1800, gt=0)
+    video_probe_timeout_seconds: float = Field(default=30.0, gt=0)
+    video_job_lease_seconds: int = Field(default=60, gt=0)
+    video_job_max_attempts: int = Field(default=3, gt=0)
+    video_progress_update_interval_seconds: float = Field(default=1.0, gt=0)
     video_track_reconciliation_threshold: float = 0.60
     video_track_vote_candidate_floor: float = Field(default=0.70, ge=0.0, le=1.0)
     video_track_vote_min_count: int = Field(default=2, ge=2)
     video_track_vote_min_margin: float = Field(default=0.05, ge=0.0, le=1.0)
     video_track_vote_min_support_ratio: float = Field(default=0.60, gt=0.5, le=1.0)
-    video_appearance_max_gap_seconds: float = 1.5
-    video_worker_poll_seconds: float = 1.0
+    video_appearance_max_gap_seconds: float = Field(default=1.5, gt=0)
+    video_worker_poll_seconds: float = Field(default=1.0, gt=0)
     video_worker_gpu_id: int = 0
     video_native_executable: str = "/workspace/build/pipeline/mvision_video_worker"
     video_tracker_config_path: str = "/workspace/configs/video_tracker_nvdcf.yml"
@@ -90,8 +91,17 @@ class Settings(BaseSettings):
     video_sgie_config_path: str = "/workspace/configs/video_sgie_arcface_r50.txt"
 
     live_enabled: bool = False
+    live_api_key: SecretStr | None = None
     live_uri_encryption_keys: SecretStr | None = None
     live_uri_fingerprint_key: SecretStr | None = None
+    mediamtx_control_url: str = "http://mediamtx:9997"
+    mediamtx_internal_rtsp_origin: str = "rtsp://mediamtx:8554"
+    mediamtx_public_whip_origin: str = "http://localhost:8889"
+    mediamtx_public_rtsp_origin: str = "rtsp://localhost:8554"
+    mediamtx_public_webrtc_origin: str = "http://localhost:8889"
+    mediamtx_request_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
+    live_profile_id: str = "face-recognition-v1"
+    live_profile_version: int = Field(default=1, ge=1)
     live_worker_gpu_id: int = 0
     live_worker_id: str = "live-worker-0"
     live_worker_poll_seconds: float = 1.0
@@ -117,6 +127,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_live_secrets(self) -> "Settings":
+        api_key = (
+            self.live_api_key.get_secret_value().strip()
+            if self.live_api_key is not None
+            else ""
+        )
         encryption_keys = (
             self.live_uri_encryption_keys.get_secret_value().strip()
             if self.live_uri_encryption_keys is not None
@@ -127,7 +142,9 @@ class Settings(BaseSettings):
             if self.live_uri_fingerprint_key is not None
             else ""
         )
-        if self.live_enabled and (not encryption_keys or not fingerprint_key):
+        if self.live_enabled and (
+            not api_key or not encryption_keys or not fingerprint_key
+        ):
             raise ValueError("LIVE_SECRET_CONFIGURATION_REQUIRED")
         if self.otel_bsp_max_export_batch_size > self.otel_bsp_max_queue_size:
             raise ValueError("OTEL_BATCH_SIZE_EXCEEDS_QUEUE_SIZE")

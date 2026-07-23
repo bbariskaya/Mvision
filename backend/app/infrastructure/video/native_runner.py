@@ -23,6 +23,16 @@ class NativeVideoCancelledError(RuntimeError):
     pass
 
 
+class NativeVideoTimeoutError(TimeoutError):
+    error_code = "VIDEO_PROCESSING_TIMEOUT"
+
+
+class NativeVideoFailedError(RuntimeError):
+    def __init__(self, error_code: str, message: str):
+        super().__init__(message)
+        self.error_code = error_code
+
+
 EventHandler = Callable[[VideoEvent], Awaitable[None] | None]
 CancellationCheck = Callable[[], Awaitable[bool] | bool]
 
@@ -71,7 +81,7 @@ class NativeVideoRunner:
                     await self._terminate(process)
                     events_task.cancel()
                     await asyncio.gather(events_task, return_exceptions=True)
-                    raise TimeoutError("Video native worker timed out")
+                    raise NativeVideoTimeoutError("Video native worker timed out")
                 await asyncio.sleep(self._poll_seconds)
             completed = await events_task
             return_code = await process.wait()
@@ -106,7 +116,7 @@ class NativeVideoRunner:
             payload = await process.stdout.readexactly(payload_size)
             event = decode_video_event(header + payload)
             if isinstance(event, VideoFailed):
-                raise RuntimeError(f"{event.error_code}: {event.message}")
+                raise NativeVideoFailedError(event.error_code, event.message)
             callback_result = on_event(event)
             if inspect.isawaitable(callback_result):
                 await callback_result

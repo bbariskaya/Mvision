@@ -29,13 +29,14 @@ namespace {
 constexpr const char* kCameraId = "019b0000-0000-7000-8000-000000000001";
 constexpr const char* kRunId = "019b0000-0000-7000-8000-000000000002";
 constexpr const char* kFaceId = "019b0000-0000-7000-8000-000000000003";
+constexpr const char* kSessionId = "019b0000-0000-7000-8000-000000000004";
 constexpr const char* kTraceparent =
     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 constexpr const char* kTracestate = "vendor=value";
 
 mvision::ProtocolHeader header(std::string type, std::uint64_t sequence = 7) {
-  return {1, std::move(type), kCameraId, kRunId, 1, sequence, kTraceparent,
-          std::string(kTracestate)};
+  return {2, std::move(type), kSessionId, kCameraId, kRunId, 3, 2, sequence,
+          kTraceparent, std::string(kTracestate)};
 }
 
 mvision::LiveObservation observation() {
@@ -63,10 +64,19 @@ mvision::StartCommand start_command() {
            "/live/camera",
            5400,
            8554,
+           4,
+           "recognize",
+           2,
+           0.5,
+           0.62,
+           0.05,
+           1'500'000'000,
            200,
-          10,
-          -1,
-          5'000'000'000};
+           10,
+           -1,
+           5'000'000'000,
+           false,
+           false};
 }
 
 void expect_error(const std::string& code, const std::vector<std::uint8_t>& frame,
@@ -108,15 +118,19 @@ std::vector<std::uint8_t> frame_buffer(const msgpack::sbuffer& payload) {
 void pack_raw_header(msgpack::packer<msgpack::sbuffer>& packer,
                      const std::string& type) {
   packer.pack(std::string("protocol_version"));
-  packer.pack(1);
+  packer.pack(2);
   packer.pack(std::string("message_type"));
   packer.pack(type);
+  packer.pack(std::string("session_id"));
+  packer.pack(std::string(kSessionId));
   packer.pack(std::string("camera_id"));
   packer.pack(std::string(kCameraId));
   packer.pack(std::string("run_id"));
   packer.pack(std::string(kRunId));
   packer.pack(std::string("generation"));
-  packer.pack(1);
+  packer.pack(3);
+  packer.pack(std::string("runtime_attempt"));
+  packer.pack(2);
   packer.pack(std::string("sequence"));
   packer.pack(7);
   packer.pack(std::string("traceparent"));
@@ -129,7 +143,7 @@ std::vector<std::uint8_t> malformed_evidence(std::size_t embedding_size,
                                              std::size_t landmark_size) {
   msgpack::sbuffer payload;
   msgpack::packer<msgpack::sbuffer> packer(payload);
-  packer.pack_map(14);
+  packer.pack_map(16);
   pack_raw_header(packer, "track_evidence");
   packer.pack(std::string("tracker_id"));
   packer.pack(42);
@@ -170,7 +184,7 @@ std::vector<std::uint8_t> malformed_evidence(std::size_t embedding_size,
 std::vector<std::uint8_t> non_finite_metrics() {
   msgpack::sbuffer payload;
   msgpack::packer<msgpack::sbuffer> packer(payload);
-  packer.pack_map(10);
+  packer.pack_map(12);
   pack_raw_header(packer, "metrics");
   packer.pack(std::string("counters"));
   packer.pack_map(0);
@@ -187,9 +201,11 @@ void run_unit_tests() {
       mvision::decode_live_message(mvision::encode_live_message(start)));
   assert(decoded.header.protocol_version == start.header.protocol_version);
   assert(decoded.header.message_type == start.header.message_type);
+  assert(decoded.header.session_id == start.header.session_id);
   assert(decoded.header.camera_id == start.header.camera_id);
   assert(decoded.header.run_id == start.header.run_id);
   assert(decoded.header.generation == start.header.generation);
+  assert(decoded.header.runtime_attempt == start.header.runtime_attempt);
   assert(decoded.header.sequence == start.header.sequence);
   assert(decoded.header.traceparent == start.header.traceparent);
   assert(decoded.header.tracestate == start.header.tracestate);
@@ -201,10 +217,19 @@ void run_unit_tests() {
   assert(decoded.tracker_config_path == start.tracker_config_path);
   assert(decoded.output_mount_path == start.output_mount_path);
   assert(decoded.output_udp_port == start.output_udp_port);
+  assert(decoded.profile_version == start.profile_version);
+  assert(decoded.analytics_mode == start.analytics_mode);
+  assert(decoded.sample_every_n == start.sample_every_n);
+  assert(decoded.detector_threshold == start.detector_threshold);
+  assert(decoded.recognition_threshold == start.recognition_threshold);
+  assert(decoded.top2_margin == start.top2_margin);
+  assert(decoded.track_gap_ns == start.track_gap_ns);
   assert(decoded.latency_ms == start.latency_ms);
   assert(decoded.reconnect_interval_seconds == start.reconnect_interval_seconds);
   assert(decoded.reconnect_attempts == start.reconnect_attempts);
   assert(decoded.frame_timeout_ns == start.frame_timeout_ns);
+  assert(decoded.recording_enabled == start.recording_enabled);
+  assert(decoded.annotated_enabled == start.annotated_enabled);
 
   expect_error("TRUNCATED_FRAME", {});
   expect_error("TRUNCATED_FRAME", {0, 0, 0});
@@ -216,11 +241,13 @@ void run_unit_tests() {
 
   msgpack::zone zone;
   std::map<std::string, msgpack::object> invalid_header{
-      {"protocol_version", msgpack::object(2, zone)},
+      {"protocol_version", msgpack::object(1, zone)},
       {"message_type", msgpack::object(std::string("state"), zone)},
+      {"session_id", msgpack::object(std::string(kSessionId), zone)},
       {"camera_id", msgpack::object(std::string(kCameraId), zone)},
       {"run_id", msgpack::object(std::string(kRunId), zone)},
-      {"generation", msgpack::object(1, zone)},
+      {"generation", msgpack::object(3, zone)},
+      {"runtime_attempt", msgpack::object(2, zone)},
       {"sequence", msgpack::object(7, zone)},
       {"traceparent", msgpack::object(std::string(kTraceparent), zone)},
       {"tracestate", msgpack::object(std::string(kTracestate), zone)},
@@ -228,7 +255,7 @@ void run_unit_tests() {
       {"reason", msgpack::object(msgpack::type::nil_t(), zone)},
   };
   expect_error("UNSUPPORTED_PROTOCOL_VERSION", frame_map(invalid_header, zone));
-  invalid_header["protocol_version"] = msgpack::object(1, zone);
+  invalid_header["protocol_version"] = msgpack::object(2, zone);
   invalid_header["message_type"] = msgpack::object(std::string("future"), zone);
   expect_error("UNKNOWN_MESSAGE_TYPE", frame_map(invalid_header, zone));
   invalid_header["message_type"] = msgpack::object(std::string("state"), zone);
@@ -270,7 +297,7 @@ void run_unit_tests() {
   expect_error("SNAPSHOT_TOO_LARGE",
                mvision::encode_live_message(oversized_snapshot));
 
-  mvision::DecodeContext wrong_generation{kCameraId, kRunId, 2, {}};
+  mvision::DecodeContext wrong_generation{kSessionId, kCameraId, kRunId, 2, 2, {}};
   expect_error("WRONG_GENERATION",
                mvision::encode_live_message(mvision::StateEvent{
                    header("state"), "ACTIVE", std::nullopt}),
@@ -279,7 +306,7 @@ void run_unit_tests() {
   mvision::IdentityAssignment assignment{
       header("identity_assignment"), 42, 3, 1, "known", std::string("Ada"),
       std::string(kFaceId), 0.87F, 0.8F, observation().embedding, 12};
-  mvision::DecodeContext revision_context{kCameraId, kRunId, 1, {}};
+  mvision::DecodeContext revision_context{kSessionId, kCameraId, kRunId, 3, 2, {}};
   static_cast<void>(mvision::decode_live_message(
       mvision::encode_live_message(assignment), &revision_context));
   expect_error("STALE_ASSIGNMENT_REVISION",
@@ -333,10 +360,19 @@ void run_parity() {
   assert(start.tracker_config_path == "tracker.yml");
   assert(start.output_mount_path == "/live/camera");
   assert(start.output_udp_port == 5400);
+  assert(start.profile_version == 4);
+  assert(start.analytics_mode == "recognize");
+  assert(start.sample_every_n == 2);
+  assert(start.detector_threshold == 0.5);
+  assert(start.recognition_threshold == 0.62);
+  assert(start.top2_margin == 0.05);
+  assert(start.track_gap_ns == 1'500'000'000);
   assert(start.latency_ms == 200);
   assert(start.reconnect_interval_seconds == 10);
   assert(start.reconnect_attempts == -1);
   assert(start.frame_timeout_ns == 5'000'000'000);
+  assert(!start.recording_enabled);
+  assert(!start.annotated_enabled);
   assert(assignment.header.sequence == 2);
   assert(assignment.tracker_id == 42);
   assert(assignment.assignment_revision == 3);

@@ -1,0 +1,7 @@
+FROM nvcr.io/nvidia/deepstream:9.0-triton-multiarch@sha256:60888367d4c97ba192411a7694c984080a553f855ad53fc4c5579d70424fafd7
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libmsgpack-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENTRYPOINT []

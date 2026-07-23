@@ -1,13 +1,20 @@
+import logging
 import re
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from app.infrastructure.database.models import VideoJob
-from app.infrastructure.database.repositories import VideoJobRepository, VideoTrackRepository
+from app.infrastructure.database.repositories import (
+    ProcessRecordRepository,
+    VideoJobRepository,
+    VideoTrackRepository,
+)
 from app.infrastructure.database.session import AsyncSessionLocal
 from app.infrastructure.object_storage.minio_adapter import MinIOAdapter
 from app.services.exceptions import JobNotFoundError, ServiceError, VideoError
+
+logger = logging.getLogger(__name__)
 
 
 class SessionFactory(Protocol):
@@ -19,12 +26,14 @@ class VideoJobService:
         self,
         job_repo: VideoJobRepository,
         track_repo: VideoTrackRepository,
+        process_repo: ProcessRecordRepository,
         minio: MinIOAdapter,
         *,
         session_factory: SessionFactory = AsyncSessionLocal,
     ):
         self._jobs = job_repo
         self._tracks = track_repo
+        self._processes = process_repo
         self._minio = minio
         self._session_factory = session_factory
 
@@ -37,9 +46,16 @@ class VideoJobService:
 
     async def cancel(self, job_id: str) -> dict[str, Any]:
         async with self._session_factory() as session:
+            current = await self._jobs.get_by_id(session, job_id)
+            if current is None:
+                raise JobNotFoundError(job_id)
+            initial_status = current.status
             job = await self._jobs.request_cancel(session, job_id)
             if job is None:
                 raise JobNotFoundError(job_id)
+            if initial_status == "pending" and job.status == "cancelled":
+                await self._tracks.delete_for_job(session, job_id)
+                await self._processes.cancel(session, job.process_id)
             await session.commit()
             return self._snapshot(job)
 
@@ -91,7 +107,10 @@ class VideoJobService:
             job = await self._jobs.get_by_id(session, job_id)
             if job is None:
                 raise JobNotFoundError(job_id)
-            if job.source_deleted_at is not None:
+            if (
+                job.source_deleted_at is not None
+                or job.source_retention_until <= datetime.now(UTC)
+            ):
                 raise VideoError("Retained source video has expired", "VIDEO_EXPIRED", 410)
             total = job.source_size
             offset, end = self._parse_range(range_header, total)
@@ -123,6 +142,8 @@ class VideoJobService:
                 values.append(
                     {
                         "job_id": job.job_id,
+                        "process_id": job.process_id,
+                        "video_url": f"/api/v1/videos/jobs/{job.job_id}/video",
                         "track_id": track.track_id,
                         "first_seen": track.first_seen,
                         "last_seen": track.last_seen,
@@ -139,7 +160,13 @@ class VideoJobService:
             jobs = await self._jobs.claim_expired_sources(session, now, limit)
             deleted = 0
             for job in jobs:
-                await self._minio.delete_video(job.source_object_key)
+                try:
+                    await self._minio.delete_video(job.source_object_key)
+                except Exception:
+                    logger.warning(
+                        "Failed to delete expired video source for job %s", job.job_id
+                    )
+                    continue
                 job.source_deleted_at = now
                 deleted += 1
             await session.commit()
